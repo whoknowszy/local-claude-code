@@ -1,0 +1,42 @@
+# LCCG - Local Claude Code Gateway Configuration
+
+server:
+  host: "127.0.0.1"
+  port: 8765
+  # api_key: "proxy-auth-key"  # Optional: auth for the proxy itself
+
+logging:
+  level: "info"  # debug | info | warning | error
+
+providers:
+  - name: minimax
+    type: anthropic
+    base_url: "https://api.minimaxi.com/anthropic/v1/messages"
+    api_key: "${MINIMAX_API_KEY}"
+    auth_scheme: "bearer"
+    models:
+      - "MiniMax-M2.7"
+
+  - name: openai
+    type: openai
+    base_url: "https://api.openai.com/v1/chat/completions"
+    api_key: "${OPENAI_API_KEY}"
+    models:
+      - "gpt-4o"
+      - "gpt-4o-mini"
+
+  # - name: openrouter
+  #   type: openai
+  #   base_url: "https://openrouter.ai/api/v1/chat/completions"
+  #   api_key: "${OPENROUTER_API_KEY}"
+  #   models:
+  #     - "anthropic/claude-sonnet-4-5"
+  #     - "deepseek/deepseek-r1"
+
+router:
+  default: "minimax,MiniMax-M2.7"
+  # background: "openai,gpt-4o-mini"
+  # think: "openrouter,deepseek/deepseek-r1"
+  # long_context: "openai,gpt-4o"
+  # long_context_threshold: 60000
+  # fallback: "minimax,MiniMax-M2.7"

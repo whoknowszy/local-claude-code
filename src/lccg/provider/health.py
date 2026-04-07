@@ -1,0 +1,43 @@
+"""Provider health tracking with circuit-breaker-like behavior."""
+
+from __future__ import annotations
+
+import time
+
+
+class ProviderHealth:
+    """Track provider health status.
+
+    A provider becomes unhealthy after consecutive failures exceed the threshold.
+    It recovers automatically after a timeout period.
+    """
+
+    def __init__(self, failure_threshold: int = 3, recovery_seconds: int = 60) -> None:
+        self._failures: dict[str, int] = {}
+        self._last_failure_time: dict[str, float] = {}
+        self._threshold = failure_threshold
+        self._recovery = recovery_seconds
+
+    def is_healthy(self, provider_name: str) -> bool:
+        """Check if provider is healthy."""
+        failures = self._failures.get(provider_name, 0)
+        if failures < self._threshold:
+            return True
+
+        # Check if recovery time has passed
+        last_time = self._last_failure_time.get(provider_name, 0)
+        if time.monotonic() - last_time > self._recovery:
+            # Auto-recover
+            self._failures[provider_name] = 0
+            return True
+
+        return False
+
+    def record_failure(self, provider_name: str) -> None:
+        """Record a failure for the provider."""
+        self._failures[provider_name] = self._failures.get(provider_name, 0) + 1
+        self._last_failure_time[provider_name] = time.monotonic()
+
+    def record_success(self, provider_name: str) -> None:
+        """Reset failure count on success."""
+        self._failures[provider_name] = 0

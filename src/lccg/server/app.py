@@ -1,0 +1,354 @@
+"""FastAPI application for the LCCG gateway server."""
+
+from __future__ import annotations
+
+import json
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
+
+import structlog
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+
+from lccg.config.schema import GatewayConfig
+from lccg.middleware.stats import StatsCollector
+from lccg.provider.health import ProviderHealth
+from lccg.provider.registry import ProviderRegistry
+from lccg.router.engine import RouterEngine
+from lccg.transformer.base import BaseTransformer
+
+logger = structlog.get_logger()
+
+
+def create_app(
+    config: GatewayConfig,
+    registry: ProviderRegistry,
+    router: RouterEngine,
+    config_path: str | None = None,
+    log_queue: Any = None,
+) -> FastAPI:
+    """Create and configure the FastAPI application."""
+    health_tracker = ProviderHealth()
+    stats = StatsCollector()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        yield
+        await app.state.registry.close_all()
+
+    app = FastAPI(title="LCCG", version="0.1.0", lifespan=lifespan)
+
+    # Store shared state
+    app.state.config = config
+    app.state.registry = registry
+    app.state.router = router
+    app.state.health = health_tracker
+    app.state.stats = stats
+    app.state.config_path = config_path
+    app.state.log_queue = log_queue
+
+    @app.get("/health")
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/v1/stats")
+    async def get_stats() -> JSONResponse:
+        """Get request statistics."""
+        return JSONResponse(content={
+            "summary": stats.get_summary(),
+            "providers": stats.get_per_provider(),
+            "recent": stats.get_recent(10),
+        })
+
+    @app.post("/v1/messages", response_model=None)
+    async def messages(request: Request) -> JSONResponse | StreamingResponse:
+        """Handle Anthropic Messages API requests."""
+        # Auth check (if proxy api_key is configured)
+        if config.server.api_key:
+            api_key = request.headers.get("x-api-key", "")
+            if api_key != config.server.api_key:
+                return JSONResponse(
+                    status_code=401,
+                    content={"error": {"type": "authentication_error", "message": "Invalid API key"}},
+                )
+
+        # Parse request body
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse(
+                status_code=400,
+                content={"error": {"type": "invalid_request_error", "message": "Invalid JSON body"}},
+            )
+
+        # Resolve route
+        try:
+            route = router.resolve(body)
+        except ValueError as e:
+            return JSONResponse(
+                status_code=400,
+                content={"error": {"type": "invalid_request_error", "message": str(e)}},
+            )
+
+        # Check provider health, try fallback if unhealthy
+        if not health_tracker.is_healthy(route.provider_name) and config.router.fallback:
+            fb_provider, fb_model = RouterEngine._parse_route(config.router.fallback)
+            if fb_provider != route.provider_name:
+                logger.warning(
+                    "router.health_fallback",
+                    original=route.provider_name,
+                    fallback=fb_provider,
+                )
+                route = router.RouteResult(provider_name=fb_provider, model=fb_model, scenario=route.scenario)
+
+        # Get provider
+        try:
+            provider = registry.get_provider(route.provider_name)
+        except KeyError:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": {
+                        "type": "invalid_request_error",
+                        "message": f"Provider not found: {route.provider_name}",
+                    }
+                },
+            )
+
+        # Override model in request with the resolved model name
+        body["model"] = route.model
+
+        # Select transformer based on provider type
+        transformer = registry.get_transformer_for_provider(route.provider_name)
+        payload = transformer.transform_request(body)
+
+        # Route to streaming or non-streaming
+        is_stream = body.get("stream", False)
+
+        if is_stream:
+            return await _handle_streaming(
+                request, provider, payload, transformer,
+                health_tracker, route.provider_name, stats, route.model, route.scenario,
+            )
+        else:
+            return await _handle_non_streaming(
+                provider, payload, transformer, health_tracker, route.provider_name,
+                router, registry, body, config, stats, route.model, route.scenario,
+            )
+
+    # Mount UI API routers
+    from lccg.server.api.config import router as config_router
+    from lccg.server.api.providers import router as providers_router
+    from lccg.server.api.stats import router as stats_router
+    from lccg.server.api.logs import router as logs_router
+
+    app.include_router(config_router)
+    app.include_router(providers_router)
+    app.include_router(stats_router)
+    app.include_router(logs_router)
+
+    # Mount UI static files (must be last so API routes take precedence)
+    static_dir = Path(__file__).parent / "static"
+    if static_dir.exists() and any(static_dir.iterdir()):
+        app.mount("/ui", StaticFiles(directory=str(static_dir), html=True), name="ui")
+
+    return app
+
+
+async def _handle_non_streaming(
+    provider: Any,
+    payload: dict[str, Any],
+    transformer: BaseTransformer,
+    health_tracker: ProviderHealth,
+    provider_name: str,
+    router: RouterEngine | None = None,
+    registry: ProviderRegistry | None = None,
+    body: dict[str, Any] | None = None,
+    config: GatewayConfig | None = None,
+    stats: StatsCollector | None = None,
+    model: str = "",
+    scenario: str | None = None,
+) -> JSONResponse:
+    """Handle non-streaming request with fallback support."""
+    timer = stats.start_timer() if stats else None
+    try:
+        response = await provider.send_request(payload, stream=False)
+        response.raise_for_status()
+        data = response.json()
+        result = transformer.transform_response(data)
+        health_tracker.record_success(provider_name)
+
+        # Extract usage from response
+        usage = result.get("usage", {})
+        input_tokens = usage.get("input_tokens", 0)
+        output_tokens = usage.get("output_tokens", 0)
+
+        if timer:
+            timer.finish(
+                provider=provider_name, model=model, status="success",
+                input_tokens=input_tokens, output_tokens=output_tokens, scenario=scenario,
+            )
+
+        logger.info(
+            "non_streaming.ok",
+            provider=provider_name,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            latency_ms=round(timer.elapsed_ms, 1) if timer else 0,
+        )
+
+        return JSONResponse(content=result, status_code=response.status_code)
+    except Exception as e:
+        health_tracker.record_failure(provider_name)
+        logger.error("non_streaming.error", error=str(e), provider=provider_name)
+
+        if timer:
+            timer.finish(provider=provider_name, model=model, status="error", error=str(e), scenario=scenario)
+
+        # Try fallback
+        if (
+            config and router and registry and body
+            and config.router.fallback
+            and provider_name != config.router.fallback.split(",")[0]
+        ):
+            fb_provider_name, fb_model = RouterEngine._parse_route(config.router.fallback)
+            logger.warning("router.fallback", original=provider_name, fallback=fb_provider_name)
+            try:
+                fb_provider = registry.get_provider(fb_provider_name)
+                fb_transformer = registry.get_transformer_for_provider(fb_provider_name)
+                body["model"] = fb_model
+                fb_payload = fb_transformer.transform_request(body)
+                fb_timer = stats.start_timer() if stats else None
+                response = await fb_provider.send_request(fb_payload, stream=False)
+                response.raise_for_status()
+                data = response.json()
+                result = fb_transformer.transform_response(data)
+                health_tracker.record_success(fb_provider_name)
+
+                usage = result.get("usage", {})
+                if fb_timer:
+                    fb_timer.finish(
+                        provider=fb_provider_name, model=fb_model, status="success",
+                        input_tokens=usage.get("input_tokens", 0),
+                        output_tokens=usage.get("output_tokens", 0),
+                        scenario=scenario,
+                    )
+
+                return JSONResponse(content=result, status_code=response.status_code)
+            except Exception as fb_error:
+                health_tracker.record_failure(fb_provider_name)
+                logger.error("non_streaming.fallback_error", error=str(fb_error), provider=fb_provider_name)
+
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": {
+                    "type": "api_error",
+                    "message": f"Provider error: {e}",
+                }
+            },
+        )
+
+
+async def _handle_streaming(
+    request: Request,
+    provider: Any,
+    payload: dict[str, Any],
+    transformer: BaseTransformer,
+    health_tracker: ProviderHealth,
+    provider_name: str,
+    stats: StatsCollector | None = None,
+    model: str = "",
+    scenario: str | None = None,
+) -> StreamingResponse:
+    """Handle streaming request - proxy SSE events from provider to client."""
+    timer = stats.start_timer() if stats else None
+    usage_info = {"input_tokens": 0, "output_tokens": 0}
+
+    async def event_generator():
+        try:
+            raw_stream = provider.stream_response(payload)
+            async for chunk in transformer.transform_stream(raw_stream):
+                if await request.is_disconnected():
+                    logger.info("streaming.client_disconnected", provider=provider.name)
+                    break
+                # Extract usage from SSE events
+                _extract_streaming_usage(chunk, usage_info)
+                yield chunk
+            health_tracker.record_success(provider_name)
+            if timer:
+                timer.finish(
+                    provider=provider_name, model=model, status="success",
+                    input_tokens=usage_info["input_tokens"],
+                    output_tokens=usage_info["output_tokens"],
+                    scenario=scenario,
+                )
+        except Exception as e:
+            health_tracker.record_failure(provider_name)
+            logger.error("streaming.error", error=str(e), provider=provider_name)
+            if timer:
+                timer.finish(provider=provider_name, model=model, status="error", error=str(e), scenario=scenario)
+            error_event = {
+                "type": "error",
+                "error": {
+                    "type": "api_error",
+                    "message": f"Provider error: {e}",
+                },
+            }
+            yield f"event: error\ndata: {json.dumps(error_event)}\n\n".encode()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _extract_streaming_usage(chunk: bytes, usage_info: dict[str, int]) -> None:
+    """Extract usage from SSE chunk bytes.
+
+    Looks for:
+    - Anthropic format: event: message_delta with usage.input_tokens/output_tokens
+    - Anthropic format: event: message_start with message.usage
+    - OpenAI format: data: {...} with usage.prompt_tokens/completion_tokens
+    """
+    text = chunk.decode("utf-8", errors="replace")
+    current_event = ""
+
+    for line in text.split("\n"):
+        line = line.strip()
+        if line.startswith("event: "):
+            current_event = line[7:]
+        elif line.startswith("data: "):
+            data_str = line[6:].strip()
+            if data_str == "[DONE]":
+                continue
+            try:
+                data = json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
+
+            # Anthropic format: message_delta has usage
+            if current_event == "message_delta" and "usage" in data:
+                u = data["usage"]
+                usage_info["input_tokens"] = u.get("input_tokens", 0)
+                usage_info["output_tokens"] = u.get("output_tokens", 0)
+
+            # Anthropic format: message_start has message.usage
+            elif current_event == "message_start" and "message" in data:
+                u = data["message"].get("usage", {})
+                if u.get("input_tokens"):
+                    usage_info["input_tokens"] = u["input_tokens"]
+
+            # OpenAI format: final chunk has usage
+            elif "usage" in data and current_event == "":
+                u = data["usage"]
+                usage_info["input_tokens"] = u.get("prompt_tokens", u.get("input_tokens", 0))
+                usage_info["output_tokens"] = u.get("completion_tokens", u.get("output_tokens", 0))

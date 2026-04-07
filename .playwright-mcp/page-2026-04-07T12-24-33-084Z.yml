@@ -1,0 +1,32 @@
+- generic [ref=e3]:
+  - navigation [ref=e4]:
+    - heading "LCCG Gateway" [level=1] [ref=e5]
+    - link "仪表盘" [ref=e6] [cursor=pointer]:
+      - /url: "#/"
+    - link "配置" [ref=e7] [cursor=pointer]:
+      - /url: "#/config"
+    - link "日志" [ref=e8] [cursor=pointer]:
+      - /url: "#/logs"
+    - link "测试" [ref=e9] [cursor=pointer]:
+      - /url: "#/test"
+  - generic [ref=e10]:
+    - heading "仪表盘" [level=2] [ref=e11]
+    - generic [ref=e12]:
+      - generic [ref=e13]:
+        - generic [ref=e14]: 总请求数
+        - generic [ref=e15]: "0"
+      - generic [ref=e16]:
+        - generic [ref=e17]: 成功率
+        - generic [ref=e18]: 100%
+      - generic [ref=e19]:
+        - generic [ref=e20]: 平均延迟
+        - generic [ref=e21]: 0ms
+      - generic [ref=e22]:
+        - generic [ref=e23]: 运行时间
+        - generic [ref=e24]: 0分
+      - generic [ref=e25]:
+        - generic [ref=e26]: 输入 Tokens
+        - generic [ref=e27]: "0"
+      - generic [ref=e28]:
+        - generic [ref=e29]: 输出 Tokens
+        - generic [ref=e30]: "0"
