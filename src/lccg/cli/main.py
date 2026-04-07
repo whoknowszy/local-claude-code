@@ -268,6 +268,10 @@ def serve(
     # Start server — uvicorn only accepts a single log level, use the most verbose one
     uvicorn_log_level = gateway_config.logging.level.split(",")[0].strip().lower()
 
+    # Watch config file for changes
+    if gateway_config.server.reload:
+        _watch_config(config_path_val, gateway_config, registry, router)
+
     uvicorn.run(
         app,
         host=gateway_config.server.host,
@@ -276,6 +280,69 @@ def serve(
         reload=gateway_config.server.reload,
         reload_dirs=["src/lccg"] if gateway_config.server.reload else None,
     )
+
+
+def _watch_config(
+    config_path: str,
+    current_config,
+    registry,
+    router,
+) -> None:
+    """Watch config file and hot-reload on changes."""
+    import threading
+    from lccg.config.loader import load_config
+    from lccg.provider.registry import ProviderRegistry
+    from lccg.router.engine import RouterEngine
+
+    config_logger = structlog.get_logger()
+    resolved_path = str(Path(config_path).expanduser().resolve())
+    last_mtime = Path(resolved_path).stat().st_mtime
+
+    def _check():
+        nonlocal last_mtime
+        while True:
+            import time
+            time.sleep(2)
+            try:
+                current_mtime = Path(resolved_path).stat().st_mtime
+                if current_mtime != last_mtime:
+                    last_mtime = current_mtime
+                    config_logger.info("config.reload_detected", file=resolved_path)
+                    try:
+                        new_config = load_config(resolved_path)
+                        # Update current_config in place
+                        current_config.server = new_config.server
+                        current_config.logging = new_config.logging
+                        current_config.providers = new_config.providers
+                        current_config.router = new_config.router
+
+                        # Rebuild registry and router
+                        new_registry = ProviderRegistry(new_config)
+                        new_router = RouterEngine(new_config, new_registry)
+
+                        # Update shared state references
+                        registry._providers = new_registry._providers
+                        registry._model_to_provider = new_registry._model_to_provider
+                        registry._provider_types = new_registry._provider_types
+                        router._config = new_config
+                        router._router = new_config.router
+
+                        provider_names = new_registry.provider_names
+                        config_logger.info(
+                            "config.reloaded",
+                            providers=provider_names,
+                            default_route=new_config.router.default,
+                        )
+                    except Exception as e:
+                        config_logger.error("config.reload_failed", error=str(e))
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                config_logger.error("config.watch_error", error=str(e))
+
+    thread = threading.Thread(target=_check, daemon=True, name="config-watcher")
+    thread.start()
+    config_logger.info("config.watcher_started", file=resolved_path)
 
 
 if __name__ == "__main__":
