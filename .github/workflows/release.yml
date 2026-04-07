@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Build backend
+        run: |
+          uv build
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build frontend
+        working-directory: ./ui
+        run: |
+          npm install
+          npm run build
+
+      - name: Create multi-platform wheels
+        run: |
+          uv pip install --system maturin
+          maturin build --release --interpreter python3.11 --interpreter python3.12
+
+      - name: Download Python artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels
+          path: dist/python
+
+      - name: Download frontend artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend
+          path: dist/frontend
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/python/**/*.whl
+            dist/frontend/**/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
