@@ -190,11 +190,13 @@ def cli() -> None:
 @click.option("--host", default=None, help="Host to bind to (overrides config)")
 @click.option("--port", default=None, type=int, help="Port to bind to (overrides config)")
 @click.option("--log-level", default=None, help="Log level (overrides config)")
+@click.option("--reload", is_flag=True, default=False, help="Enable auto-reload on code changes")
 def serve(
     config: str | None,
     host: str | None,
     port: int | None,
     log_level: str | None,
+    reload: bool = False,
 ) -> None:
     """Start the LCCG gateway server."""
     # Load config
@@ -214,6 +216,8 @@ def serve(
         gateway_config.server.port = port
     if log_level:
         gateway_config.logging.level = log_level
+    if reload:
+        gateway_config.server.reload = True
 
     # Setup logging with queue for UI log streaming
     import asyncio as _asyncio
@@ -269,6 +273,8 @@ def serve(
         host=gateway_config.server.host,
         port=gateway_config.server.port,
         log_level=uvicorn_log_level,
+        reload=gateway_config.server.reload,
+        reload_dirs=["src/lccg"] if gateway_config.server.reload else None,
     )
 
 

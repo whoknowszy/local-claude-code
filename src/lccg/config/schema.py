@@ -17,6 +17,7 @@ class ServerConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8765
     api_key: Optional[str] = None
+    reload: bool = False  # Enable auto-reload on code changes
 
 
 class LoggingConfig(BaseModel):
