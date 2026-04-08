@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import uuid
 from contextlib import asynccontextmanager
@@ -80,7 +81,7 @@ def create_app(
         yield
         await app.state.registry.close_all()
 
-    app = FastAPI(title="LCCG", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="LCCG", version=importlib.metadata.version("lccg"), lifespan=lifespan)
 
     # Store shared state
     app.state.config = config

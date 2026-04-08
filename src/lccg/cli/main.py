@@ -8,6 +8,7 @@ import time as _time
 from pathlib import Path
 
 import click
+import importlib.metadata
 import httpx
 import structlog
 import uvicorn
@@ -236,16 +237,17 @@ def serve(
     app = create_app(gateway_config, registry, router, config_path=config_path_val, log_queue=log_queue)
 
     # Display startup banner
+    version = importlib.metadata.version("lccg")
     console.print(
         Panel(
-            f"[bold green]LCCG Gateway Server[/bold green]\n\n"
+            f"[bold green]LCCG Gateway Server[/bold green]  v{version}\n\n"
             f"  Host:     [cyan]{gateway_config.server.host}[/cyan]\n"
             f"  Port:     [cyan]{gateway_config.server.port}[/cyan]\n"
             f"  Providers: [cyan]{', '.join(registry.provider_names)}[/cyan]\n\n"
             f"  UI:       [cyan]http://{gateway_config.server.host}:{gateway_config.server.port}/ui/[/cyan]\n\n"
             f"  Set [yellow]ANTHROPIC_BASE_URL=http://{gateway_config.server.host}:{gateway_config.server.port}[/yellow]\n"
             f"  to use this gateway with Claude Code.",
-            title="Local Claude Code Gateway",
+            title=f"Local Claude Code Gateway v{version}",
             border_style="green",
         )
     )
