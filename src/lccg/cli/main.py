@@ -154,7 +154,7 @@ def _queue_processor(log_queue: queue.Queue):
     def processor(logger, method_name, event_dict):
         try:
             line = json.dumps(event_dict, ensure_ascii=False, default=str)
-            log_queue.put_nowait(line)
+            log_queue.put(line, block=True, timeout=1.0)
         except Exception:
             pass  # Queue full or other error — drop silently
         return event_dict
@@ -218,7 +218,7 @@ def serve(
         gateway_config.server.reload = True
 
     # Setup logging with queue for UI log streaming
-    log_queue: queue.Queue = queue.Queue(maxsize=1000)
+    log_queue: queue.Queue = queue.Queue()
     _setup_logging(gateway_config.logging.level, gateway_config.logging.log_dir, log_queue=log_queue)
     logger = structlog.get_logger()
 
