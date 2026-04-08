@@ -72,7 +72,7 @@ $pipCmd = "$python -m pip"
 
 # Install lccg
 Write-Info "安装 lccg..."
-& $pipCmd install --upgrade lccg 2>&1 | Out-Null
+& $pipCmd install --upgrade "git+https://github.com/whoknowszy/local-claude-code.git@v0.2.0#egg=lccg" 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Write-Err "lccg 安装失败，请检查网络连接"
     exit 1
