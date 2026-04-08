@@ -81,7 +81,7 @@ body { margin: 0; }
 
 .content > .page-inner {
   width: 100%;
-  max-width: 1200px;
+  max-width: none;
   padding: 24px 32px;
 }
 
@@ -90,10 +90,10 @@ body { margin: 0; }
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 20px;
-  margin-bottom: 16px;
+  margin-bottom: 0;
 }
 
-.card h2 { font-size: 16px; color: var(--text-h); margin-bottom: 12px; }
+.card h2 { font-size: 15px; color: var(--text-h); margin-bottom: 12px; }
 
 .stat-grid {
   display: grid;
@@ -172,8 +172,8 @@ input:focus, select:focus, textarea:focus {
   border-color: var(--accent);
 }
 
-.form-group { margin-bottom: 12px; }
-.form-group label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: var(--text-h); }
+.form-group { margin-bottom: 10px; }
+.form-group label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 3px; color: var(--text-h); }
 
 .form-row { display: flex; gap: 12px; }
 .form-row > * { flex: 1; }

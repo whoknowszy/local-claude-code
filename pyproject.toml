@@ -4,20 +4,20 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lccg"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local Claude Code Gateway - A local model gateway proxy for Claude Code"
-requires-python = ">=3.11"
+requires-python = ">=3.9"
 license = "MIT"
 dependencies = [
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.34.0",
-    "sse-starlette>=2.2.0",
-    "httpx>=0.28.0",
-    "pydantic>=2.10.0",
-    "pydantic-settings>=2.7.0",
+    "fastapi>=0.104.0,<0.115.0",
+    "uvicorn[standard]>=0.24.0,<0.34.0",
+    "sse-starlette>=2.0.0",
+    "httpx>=0.25.0",
+    "pydantic>=2.5.0,<2.10.0",
+    "pydantic-settings>=2.1.0,<2.7.0",
     "pyyaml>=6.0",
     "click>=8.1.0",
-    "rich>=13.9.0",
+    "rich>=13.7.0,<13.9.0",
     "structlog>=24.4.0",
     "tiktoken>=0.7.0",
 ]
@@ -38,7 +38,7 @@ packages = ["src/lccg"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]

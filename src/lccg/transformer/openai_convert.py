@@ -508,13 +508,14 @@ class _StreamState:
         finish_reason = choice.get("finish_reason")
         if finish_reason:
             self.stop_reason = _STOP_REASON_MAP.get(finish_reason, "end_turn")
-            # Capture usage from the final chunk
-            if data.get("usage"):
-                u = data["usage"]
-                self.usage = {
-                    "input_tokens": u.get("prompt_tokens", 0),
-                    "output_tokens": u.get("completion_tokens", 0),
-                }
+
+        # Always capture usage when present (may arrive in a separate chunk from finish_reason)
+        if data.get("usage"):
+            u = data["usage"]
+            self.usage = {
+                "input_tokens": u.get("prompt_tokens", 0),
+                "output_tokens": u.get("completion_tokens", 0),
+            }
 
         return events
 

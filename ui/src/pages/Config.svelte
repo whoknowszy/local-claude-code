@@ -4,10 +4,11 @@
   let config = $state(null)
   let error = $state('')
   let saved = $state(false)
+  let editing = $state(false)
 
   // Provider modal state
   let showModal = $state(false)
-  let editingIdx = $state(-1)  // -1 = create, >= 0 = edit
+  let editingIdx = $state(-1)
   let form = $state({
     name: '', type: 'anthropic', base_url: '', api_key: '',
     auth_scheme: 'x-api-key', models_text: '', timeout: 600,
@@ -65,7 +66,6 @@
     if (form.api_key) provider.api_key = form.api_key
 
     if (editingIdx >= 0) {
-      // Keep existing api_key if not changed
       if (!provider.api_key) provider.api_key = config.providers[editingIdx].api_key
       config.providers[editingIdx] = provider
     } else {
@@ -85,15 +85,31 @@
     try {
       await api.updateConfig(config)
       saved = true
+      editing = false
       setTimeout(() => saved = false, 2000)
     } catch (e) {
       error = e.message
     }
   }
+
+  function cancelEdit() {
+    load()
+    editing = false
+  }
 </script>
 
-<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
   <h2>配置</h2>
+  {#if config}
+    {#if !editing}
+      <button class="btn-primary" onclick={() => editing = true}>编辑</button>
+    {:else}
+      <div style="display: flex; gap: 8px;">
+        <button class="btn-primary" onclick={save}>保存</button>
+        <button onclick={cancelEdit}>取消</button>
+      </div>
+    {/if}
+  {/if}
 </div>
 
 {#if error}
@@ -104,173 +120,183 @@
 {/if}
 
 {#if config}
-  <!-- Server -->
-  <div class="card">
-    <h2>服务器</h2>
-    <div class="form-row">
-      <div class="form-group">
-        <label>Host</label>
-        <input bind:value={config.server.host} />
-      </div>
-      <div class="form-group">
-        <label>Port</label>
-        <input type="number" bind:value={config.server.port} />
-      </div>
-      <div class="form-group">
-        <label>代理 API Key（可选）</label>
-        <input bind:value={config.server.api_key} placeholder="留空则不启用代理认证" />
-      </div>
-    </div>
-  </div>
-
-  <!-- Logging -->
-  <div class="card">
-    <h2>日志</h2>
-    <div class="form-row">
-      <div class="form-group">
-        <label>日志级别</label>
-        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-          {#each ['debug', 'info', 'warning', 'error'] as lv}
-            <label style="display: flex; align-items: center; gap: 4px; font-weight: normal; cursor: pointer;">
-              <input type="checkbox"
-                checked={config.logging.level?.includes?.(lv)}
-                onchange={(e) => {
-                  const levels = ['debug', 'info', 'warning', 'error']
-                  let cur = config.logging.level || ''
-                  if (typeof cur === 'string' && !cur.includes(',')) cur = cur
-                  let selected = cur ? cur.split(',').filter(Boolean) : []
-                  if (e.target.checked) {
-                    if (!selected.includes(lv)) selected.push(lv)
-                  } else {
-                    selected = selected.filter(l => l !== lv)
-                  }
-                  // Keep the most verbose level as the primary (for structlog filtering)
-                  const order = ['debug', 'info', 'warning', 'error']
-                  selected.sort((a, b) => order.indexOf(a) - order.indexOf(b))
-                  config.logging.level = selected.join(',')
-                }}
-              />
-              {lv}
-            </label>
-          {/each}
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+    <!-- Left column: Server + Logging -->
+    <div style="display: flex; flex-direction: column; gap: 16px;">
+      <!-- Server -->
+      <div class="card">
+        <h2>服务器</h2>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Host</label>
+            <input bind:value={config.server.host} disabled={!editing} />
+          </div>
+          <div class="form-group">
+            <label>Port</label>
+            <input type="number" bind:value={config.server.port} disabled={!editing} />
+          </div>
+          <div class="form-group">
+            <label>代理 API Key（可选）</label>
+            <input bind:value={config.server.api_key} placeholder="留空则不启用代理认证" disabled={!editing} />
+          </div>
         </div>
       </div>
-      <div class="form-group">
-        <label>日志目录</label>
-        <input bind:value={config.logging.log_dir} placeholder="~/.lccg/logs" />
+
+      <!-- Logging -->
+      <div class="card">
+        <h2>日志</h2>
+        <div class="form-row">
+          <div class="form-group">
+            <label>日志级别</label>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              {#each ['debug', 'info', 'warning', 'error'] as lv}
+                <label style="display: flex; align-items: center; gap: 4px; font-weight: normal; cursor: pointer;">
+                  <input type="checkbox"
+                    checked={config.logging.level?.includes?.(lv)}
+                    disabled={!editing}
+                    onchange={(e) => {
+                      const levels = ['debug', 'info', 'warning', 'error']
+                      let cur = config.logging.level || ''
+                      if (typeof cur === 'string' && !cur.includes(',')) cur = cur
+                      let selected = cur ? cur.split(',').filter(Boolean) : []
+                      if (e.target.checked) {
+                        if (!selected.includes(lv)) selected.push(lv)
+                      } else {
+                        selected = selected.filter(l => l !== lv)
+                      }
+                      const order = ['debug', 'info', 'warning', 'error']
+                      selected.sort((a, b) => order.indexOf(a) - order.indexOf(b))
+                      config.logging.level = selected.join(',')
+                    }}
+                  />
+                  {lv}
+                </label>
+              {/each}
+            </div>
+          </div>
+          <div class="form-group">
+            <label>日志目录</label>
+            <input bind:value={config.logging.log_dir} placeholder="~/.lccg/logs" disabled={!editing} />
+          </div>
+        </div>
+      </div>
+
+      <!-- Providers -->
+      <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <h2 style="margin-bottom: 0;">Providers</h2>
+          {#if editing}
+            <button class="btn-primary" onclick={openCreate}>+ 添加 Provider</button>
+          {/if}
+        </div>
+        {#if config.providers.length === 0}
+          <div class="empty">暂无 Provider</div>
+        {:else}
+          <table>
+            <thead>
+              <tr>
+                <th>名称</th>
+                <th>类型</th>
+                <th>Base URL</th>
+                <th>模型</th>
+                <th>认证</th>
+                {#if editing}<th>操作</th>{/if}
+              </tr>
+            </thead>
+            <tbody>
+              {#each config.providers as p, idx}
+                <tr>
+                  <td><strong>{p.name}</strong></td>
+                  <td><span class="badge badge-blue">{p.type}</span></td>
+                  <td title={p.base_url} style="max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{p.base_url}</td>
+                  <td>{(p.models || []).join(', ')}</td>
+                  <td>{p.auth_scheme}</td>
+                  {#if editing}
+                    <td class="actions">
+                      <button onclick={() => openEdit(idx)}>编辑</button>
+                      <button class="btn-danger" onclick={() => removeProvider(idx)}>删除</button>
+                    </td>
+                  {/if}
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        {/if}
+      </div>
+
+    </div>
+
+    <!-- Right column: Router -->
+    <div class="card">
+      <h2>路由</h2>
+      <div class="form-row">
+        <div class="form-group">
+          <label>默认路由</label>
+          <select bind:value={config.router.default} disabled={!editing}>
+            <option value="">-- 不设置 --</option>
+            {#each routeOptions as opt}
+              <option value={opt}>{opt}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>后台任务路由</label>
+          <select bind:value={config.router.background} disabled={!editing}>
+            <option value="">-- 不设置 --</option>
+            {#each routeOptions as opt}
+              <option value={opt}>{opt}</option>
+            {/each}
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>思考路由</label>
+          <select bind:value={config.router.think} disabled={!editing}>
+            <option value="">-- 不设置 --</option>
+            {#each routeOptions as opt}
+              <option value={opt}>{opt}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>长上下文路由</label>
+          <select bind:value={config.router.long_context} disabled={!editing}>
+            <option value="">-- 不设置 --</option>
+            {#each routeOptions as opt}
+              <option value={opt}>{opt}</option>
+            {/each}
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>长上下文阈值（tokens）</label>
+          <input type="number" bind:value={config.router.long_context_threshold} disabled={!editing} />
+        </div>
+        <div class="form-group">
+          <label>网页搜索路由</label>
+          <select bind:value={config.router.web_search} disabled={!editing}>
+            <option value="">-- 不设置 --</option>
+            {#each routeOptions as opt}
+              <option value={opt}>{opt}</option>
+            {/each}
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>故障回退路由</label>
+          <select bind:value={config.router.fallback} disabled={!editing}>
+            <option value="">-- 不设置 --</option>
+            {#each routeOptions as opt}
+              <option value={opt}>{opt}</option>
+            {/each}
+          </select>
+        </div>
       </div>
     </div>
   </div>
-
-  <!-- Providers -->
-  <div class="card">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-      <h2 style="margin-bottom: 0;">Providers</h2>
-      <button class="btn-primary" onclick={openCreate}>+ 添加 Provider</button>
-    </div>
-    {#if config.providers.length === 0}
-      <div class="empty">暂无 Provider</div>
-    {:else}
-      <table>
-        <thead>
-          <tr>
-            <th>名称</th>
-            <th>类型</th>
-            <th>Base URL</th>
-            <th>模型</th>
-            <th>认证</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each config.providers as p, idx}
-            <tr>
-              <td><strong>{p.name}</strong></td>
-              <td><span class="badge badge-blue">{p.type}</span></td>
-              <td style="max-width: 250px; overflow: hidden; text-overflow: ellipsis;">{p.base_url}</td>
-              <td>{(p.models || []).join(', ')}</td>
-              <td>{p.auth_scheme}</td>
-              <td class="actions">
-                <button onclick={() => openEdit(idx)}>编辑</button>
-                <button class="btn-danger" onclick={() => removeProvider(idx)}>删除</button>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    {/if}
-  </div>
-
-  <!-- Router -->
-  <div class="card">
-    <h2>路由</h2>
-    <div class="form-group">
-      <label>默认路由</label>
-      <select bind:value={config.router.default}>
-        <option value="">-- 不设置 --</option>
-        {#each routeOptions as opt}
-          <option value={opt}>{opt}</option>
-        {/each}
-      </select>
-    </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label>后台任务路由</label>
-        <select bind:value={config.router.background}>
-          <option value="">-- 不设置 --</option>
-          {#each routeOptions as opt}
-            <option value={opt}>{opt}</option>
-          {/each}
-        </select>
-      </div>
-      <div class="form-group">
-        <label>思考路由</label>
-        <select bind:value={config.router.think}>
-          <option value="">-- 不设置 --</option>
-          {#each routeOptions as opt}
-            <option value={opt}>{opt}</option>
-          {/each}
-        </select>
-      </div>
-    </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label>长上下文路由</label>
-        <select bind:value={config.router.long_context}>
-          <option value="">-- 不设置 --</option>
-          {#each routeOptions as opt}
-            <option value={opt}>{opt}</option>
-          {/each}
-        </select>
-      </div>
-      <div class="form-group">
-        <label>长上下文阈值（tokens）</label>
-        <input type="number" bind:value={config.router.long_context_threshold} />
-      </div>
-    </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label>网页搜索路由</label>
-        <select bind:value={config.router.web_search}>
-          <option value="">-- 不设置 --</option>
-          {#each routeOptions as opt}
-            <option value={opt}>{opt}</option>
-          {/each}
-        </select>
-      </div>
-      <div class="form-group">
-        <label>故障回退路由</label>
-        <select bind:value={config.router.fallback}>
-          <option value="">-- 不设置 --</option>
-          {#each routeOptions as opt}
-            <option value={opt}>{opt}</option>
-          {/each}
-        </select>
-      </div>
-    </div>
-  </div>
-
-  <button class="btn-primary" onclick={save} style="margin-top: 8px;">保存全部配置</button>
 {:else}
   <div class="empty">加载中...</div>
 {/if}

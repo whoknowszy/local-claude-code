@@ -356,6 +356,11 @@ local-claude-code/                     # ~2,200 行源码，54 个测试
 - 2026-04-07: Phase 4 部分完成 — 请求统计 (`middleware/stats.py`) + `lccg status` CLI + `GET /v1/stats` + 流式 usage 提取
 - 2026-04-07: 日志系统 — 会话级日志文件 `lccg-{timestamp}.log`，50MB 轮转，保留 3 个，双输出（控制台彩色 + 文件 JSON）
 - 2026-04-07: 文档全面更新，对齐 2,200 行源码实际实现
+- 2026-04-08: Web UI 配置页面 — Server/Logging/Providers + Router 两列布局
+- 2026-04-08: Web UI 配置页面 — 编辑/保存按钮移至顶部 header
+- 2026-04-08: Web UI 配置页面 — Providers 表格 Base URL 字段压缩显示
+- 2026-04-08: Web UI 配置页面 — 默认不可编辑，点击"编辑"进入编辑模式
+- 2026-04-08: 日志输出优化（请求/响应增加 client_ip, scenario, latency, tokens 等字段）
 
 ---
 

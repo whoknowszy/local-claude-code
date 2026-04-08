@@ -14,8 +14,11 @@ ui/dist/
 
 # IDE
 .idea/
+.idea/**
 .vscode/
 *.swp
+*.iml
+misc.xml
 
 # OS
 .DS_Store

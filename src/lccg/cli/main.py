@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import queue
 import time as _time
 from pathlib import Path
 
@@ -22,7 +23,7 @@ from lccg.server.app import create_app
 console = Console()
 
 
-def _setup_logging(level: str, log_dir: str | None = None, log_queue=None) -> None:
+def _setup_logging(level: str, log_dir: str | None = None, log_queue: queue.Queue | None = None) -> None:
     """Configure structlog with session-based file logging.
 
     Each session creates a new log file: lccg-{YYYYMMDDHHmmss}.log
@@ -148,17 +149,14 @@ def _file_and_console_processor():
     return processor
 
 
-def _queue_processor(log_queue):
-    """Returns a processor that pushes log entries to an asyncio Queue for SSE streaming."""
-    import asyncio as _asyncio
-
+def _queue_processor(log_queue: queue.Queue):
+    """Returns a processor that pushes log entries to the queue for SSE streaming."""
     def processor(logger, method_name, event_dict):
-        if log_queue is not None:
-            try:
-                line = json.dumps(event_dict, ensure_ascii=False, default=str)
-                log_queue.put_nowait(line)
-            except Exception:
-                pass  # Queue full or other error — drop silently
+        try:
+            line = json.dumps(event_dict, ensure_ascii=False, default=str)
+            log_queue.put_nowait(line)
+        except Exception:
+            pass  # Queue full or other error — drop silently
         return event_dict
 
     return processor
@@ -220,16 +218,10 @@ def serve(
         gateway_config.server.reload = True
 
     # Setup logging with queue for UI log streaming
-    import asyncio as _asyncio
-    log_queue = _asyncio.Queue(maxsize=1000)
+    log_queue: queue.Queue = queue.Queue(maxsize=1000)
     _setup_logging(gateway_config.logging.level, gateway_config.logging.log_dir, log_queue=log_queue)
     logger = structlog.get_logger()
 
-    # Log provider API key status
-    for p in gateway_config.providers:
-        key_display = f"{p.api_key[:8]}...{p.api_key[-4:]}" if p.api_key and len(p.api_key) > 12 else ("(empty)" if not p.api_key else p.api_key)
-        masked = "***" if p.api_key else "(empty)"
-        logger.info("provider.config", name=p.name, type=p.type.value, base_url=p.base_url, api_key=masked)
 
     # Build provider registry and router
     try:
@@ -263,14 +255,14 @@ def serve(
         host=gateway_config.server.host,
         port=gateway_config.server.port,
         providers=registry.provider_names,
+        ui_url=f"http://{gateway_config.server.host}:{gateway_config.server.port}/ui/",
     )
 
     # Start server — uvicorn only accepts a single log level, use the most verbose one
     uvicorn_log_level = gateway_config.logging.level.split(",")[0].strip().lower()
 
     # Watch config file for changes
-    if gateway_config.server.reload:
-        _watch_config(config_path_val, gateway_config, registry, router)
+    _watch_config(config_path_val, gateway_config, registry, router, log_queue)
 
     uvicorn.run(
         app,
@@ -287,27 +279,39 @@ def _watch_config(
     current_config,
     registry,
     router,
+    log_queue: queue.Queue,
 ) -> None:
     """Watch config file and hot-reload on changes."""
+    import sys
     import threading
+    import time
+
     from lccg.config.loader import load_config
     from lccg.provider.registry import ProviderRegistry
     from lccg.router.engine import RouterEngine
 
-    config_logger = structlog.get_logger()
     resolved_path = str(Path(config_path).expanduser().resolve())
     last_mtime = Path(resolved_path).stat().st_mtime
+
+    def _log(level: str, msg: str, *args) -> None:
+        full_msg = f"[lccg] {level.upper()}: {msg % args}"
+        print(full_msg, file=sys.stderr, flush=True)
+        try:
+            log_queue.put_nowait(json.dumps({"event": "config_reload", "level": level, "message": full_msg}))
+        except Exception:
+            pass
+
+    _log("info", "config watcher started  file=%s", resolved_path)
 
     def _check():
         nonlocal last_mtime
         while True:
-            import time
             time.sleep(2)
             try:
                 current_mtime = Path(resolved_path).stat().st_mtime
                 if current_mtime != last_mtime:
                     last_mtime = current_mtime
-                    config_logger.info("config.reload_detected", file=resolved_path)
+                    _log("info", "config change detected  file=%s", resolved_path)
                     try:
                         new_config = load_config(resolved_path)
                         # Update current_config in place
@@ -328,21 +332,21 @@ def _watch_config(
                         router._router = new_config.router
 
                         provider_names = new_registry.provider_names
-                        config_logger.info(
-                            "config.reloaded",
-                            providers=provider_names,
-                            default_route=new_config.router.default,
+                        _log(
+                            "info",
+                            "config reloaded  providers=%s  default=%s",
+                            provider_names,
+                            new_config.router.default,
                         )
                     except Exception as e:
-                        config_logger.error("config.reload_failed", error=str(e))
+                        _log("error", "config reload failed  error=%s", str(e))
             except FileNotFoundError:
                 pass
             except Exception as e:
-                config_logger.error("config.watch_error", error=str(e))
+                _log("error", "config watch error  error=%s", str(e))
 
     thread = threading.Thread(target=_check, daemon=True, name="config-watcher")
     thread.start()
-    config_logger.info("config.watcher_started", file=resolved_path)
 
 
 if __name__ == "__main__":
