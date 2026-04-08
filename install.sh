@@ -77,7 +77,7 @@ ensure_pip() {
 
 install_package() {
     info "安装 lccg..."
-    $PIP_CMD install --force-reinstall --no-deps "git+https://github.com/whoknowszy/local-claude-code.git@v0.2.0#egg=lccg"
+    $PIP_CMD install --force-reinstall --no-deps "git+https://github.com/whoknowszy/local-claude-code.git@main#egg=lccg"
     success "lccg 安装完成！"
 }
 
