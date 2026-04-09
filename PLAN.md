@@ -361,6 +361,10 @@ local-claude-code/                     # ~2,200 行源码，54 个测试
 - 2026-04-08: Web UI 配置页面 — Providers 表格 Base URL 字段压缩显示
 - 2026-04-08: Web UI 配置页面 — 默认不可编辑，点击"编辑"进入编辑模式
 - 2026-04-08: 日志输出优化（请求/响应增加 client_ip, scenario, latency, tokens 等字段）
+- 2026-04-08: 请求追踪链路（request_id 贯穿 gateway/router/provider）、fallback 日志、payload 摘要
+- 2026-04-08: 动态版本号（banner + --version 从 importlib.metadata 读取）
+- 2026-04-08: 安装脚本（bash + PowerShell）、INSTALL.md 安装文档
+- 2026-04-09: 首次启动自动创建默认配置，无需手动创建
 
 ---
 
