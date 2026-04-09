@@ -54,10 +54,19 @@ def load_config(config_path: str | Path | None = None) -> GatewayConfig:
         config_path = Path(config_path)
 
     if not config_path.exists():
-        raise FileNotFoundError(
-            f"Config file not found: {config_path}\n"
-            f"Create one based on config.example.yaml"
-        )
+        # Auto-create default config
+        try:
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            default_config = GatewayConfig()
+            save_config(default_config, config_path)
+        except Exception:
+            raise FileNotFoundError(
+                f"Config file not found and could not create default: {config_path}\n"
+                f"Please create it manually."
+            )
+        import structlog
+        logger = structlog.get_logger()
+        logger.info("config.created", path=str(config_path))
 
     with open(config_path, "r", encoding="utf-8") as f:
         raw_data = yaml.safe_load(f) or {}
