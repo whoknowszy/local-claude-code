@@ -48,7 +48,7 @@ def _read_env_from_shell_profile() -> dict[str, str]:
             line = line.strip()
             # Only consider lines with export or direct assignment
             for pattern in patterns:
-                m = re.match(pattern[1], line, re.IGNORECASE)
+                m = pattern[1].match(line)
                 if m:
                     value = m.group(1).strip()
                     if "BASE_URL" in pattern[1].upper():
