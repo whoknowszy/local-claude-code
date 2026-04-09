@@ -69,9 +69,19 @@ Write-Info "确保 pip 可用..."
 
 # Install lccg
 Write-Info "安装 lccg..."
-& $python -m pip install --force-reinstall --no-cache-dir --no-deps `
-    "git+https://github.com/whoknowszy/local-claude-code.git@main#egg=lccg" >$null 2>&1
-if ($LASTEXITCODE -ne 0 -or -not (Get-Command lccg -ErrorAction SilentlyContinue)) {
+# Write pip command to a temp .bat file and run via cmd /c
+# This is the only reliable way to suppress Python's Information stream (stream #6)
+# in PowerShell 5.x — all output stays inside cmd and gets swallowed by >NUL
+$bat = "$env:TEMP\lccg_install_$PID.bat"
+@"
+@echo off
+"$python" -m pip install --force-reinstall --no-cache-dir --no-deps "git+https://github.com/whoknowszy/local-claude-code.git@main#egg=lccg" >NUL 2>&1
+exit /b %ERRORLEVEL%
+"@ | Out-File -FilePath $bat -Encoding ASCII
+cmd /c $bat
+$exitCode = $LASTEXITCODE
+Remove-Item $bat -ErrorAction SilentlyContinue
+if ($exitCode -ne 0 -or -not (Get-Command lccg -ErrorAction SilentlyContinue)) {
     Write-Err "lccg 安装失败，请手动运行以下命令排查："
     Write-Host "  $python -m pip install --force-reinstall --no-cache-dir --no-deps `"git+https://github.com/whoknowszy/local-claude-code.git@main#egg=lccg`"" -ForegroundColor Gray
     exit 1
