@@ -29,6 +29,7 @@ class BaseProvider(ABC):
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(self.config.timeout),
                 headers=headers,
+                follow_redirects=True,
             )
         return self._client
 

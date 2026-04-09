@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import json
 from typing import Any, AsyncIterator
 
@@ -37,9 +38,12 @@ class OpenAIProvider(BaseProvider):
     @property
     def client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
+            headers = self._build_headers()
+            headers["Accept-Encoding"] = "identity"
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(self.config.timeout),
-                headers=self._build_headers(),
+                headers=headers,
+                follow_redirects=True,
             )
         return self._client
 
@@ -68,7 +72,12 @@ class OpenAIProvider(BaseProvider):
             json=payload,
         )
 
-        resp_text = await response.aread()
+        resp_raw = await response.aread()
+        resp_headers = dict(response.headers)
+        try:
+            resp_text = gzip.decompress(resp_raw)
+        except Exception:
+            resp_text = resp_raw
         logger.info(
             "openai_provider.response",
             provider=self.name,
