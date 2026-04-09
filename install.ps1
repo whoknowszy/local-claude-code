@@ -69,20 +69,13 @@ Write-Info "确保 pip 可用..."
 
 # Install lccg
 Write-Info "安装 lccg..."
-$errFile = "$env:TEMP\lccg_install_err.txt"
-$exitCode = 0
 & $python -m pip install --force-reinstall --no-cache-dir --no-deps `
-    "git+https://github.com/whoknowszy/local-claude-code.git@main#egg=lccg" `
-    2>$errFile | Out-Null
-$exitCode = $LASTEXITCODE
-if ($exitCode -ne 0 -or -not (Get-Command lccg -ErrorAction SilentlyContinue)) {
-    $errContent = if (Test-Path $errFile) { Get-Content $errFile -Raw } else { "" }
-    Write-Err "lccg 安装失败 (exit $exitCode)"
-    if ($errContent) { Write-Host $errContent -ForegroundColor Red }
-    Remove-Item $errFile -ErrorAction SilentlyContinue
+    "git+https://github.com/whoknowszy/local-claude-code.git@main#egg=lccg" >$null 2>&1
+if ($LASTEXITCODE -ne 0 -or -not (Get-Command lccg -ErrorAction SilentlyContinue)) {
+    Write-Err "lccg 安装失败，请手动运行以下命令排查："
+    Write-Host "  $python -m pip install --force-reinstall --no-cache-dir --no-deps `"git+https://github.com/whoknowszy/local-claude-code.git@main#egg=lccg`"" -ForegroundColor Gray
     exit 1
 }
-Remove-Item $errFile -ErrorAction SilentlyContinue
 Write-Success "lccg 安装完成"
 
 # Create config
