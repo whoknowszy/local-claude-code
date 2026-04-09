@@ -22,7 +22,12 @@ Write-Host " |  \| |/ _ \ \ /\ / / _ \ '__| |_| |/ _ \| | | |" -ForegroundColor 
 Write-Host " |_|\  |  __/\ V  V /  __/ |  |  _  | (_) | |_| |" -ForegroundColor Cyan
 Write-Host "   |__/\___| \_/\_/ \___|_|  |_| |_|\___/ \__, |" -ForegroundColor Cyan
 Write-Host "                                            |___/  " -ForegroundColor Cyan
-Write-Host "Local Claude Code Gateway v0.2.0" -ForegroundColor White
+$INSTALL_VERSION = "v0.3.0"
+try {
+    $resp = Invoke-WebRequest -Uri "https://raw.githubusercontent.com/whoknowszy/local-claude-code/main/pyproject.toml" -UseBasicParsing -TimeoutSec 5
+    if ($resp.Content -match 'version\s*=\s*"([^"]+)"') { $INSTALL_VERSION = "v" + $Matches[1] }
+} catch {}
+Write-Host "Local Claude Code Gateway $INSTALL_VERSION" -ForegroundColor White
 Write-Host ""
 
 # Detect Python

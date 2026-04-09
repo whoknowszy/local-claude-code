@@ -155,6 +155,18 @@ PYEOF
 }
 
 print_banner() {
+    # Fetch version from pyproject.toml on GitHub
+
+    INSTALL_VERSION="v0.3.0"
+
+    if command -v curl &>/dev/null; then
+
+        INSTALL_VERSION=$(curl -sL --max-time 5 https://raw.githubusercontent.com/whoknowszy/local-claude-code/main/pyproject.toml 2>/dev/null | \
+
+            python3 -c "import re,sys; m=re.search(r'^version\s*=\s*\"([^\"]+)\"', sys.stdin.read(), re.M); print('v'+m.group(1) if m else 'v0.3.0')" 2>/dev/null) || true
+
+    fi
+
     echo ""
     echo -e "${CYAN}  _   _                       _   _             "
     echo -e " | \\ | | _____      _____ _ __| | | | ___  _   _ "
@@ -162,7 +174,7 @@ print_banner() {
     echo -e " |_|\\  |  __/\\ V  V /  __/ |  |  _  | (_) | |_| |"
     echo -e "   |__/\\___| \\_/\\_/ \\___|_|  |_| |_|\\___/ \\__, |"
     echo -e "                                            |___/  "
-    echo -e "${NC}Local Claude Code Gateway v0.2.0"
+    echo -e "${NC}Local Claude Code Gateway ${INSTALL_VERSION}"
     echo ""
 }
 
