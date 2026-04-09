@@ -22,4 +22,7 @@ export const api = {
   getStats: () => request('/stats'),
   getHealth: () => request('/health'),
   getRecentLogs: () => request('/logs/recent'),
+
+  getClaudeEnv: () => request('/config/claude-env'),
+  updateClaudeEnv: (env) => request('/config/claude-env', { method: 'PUT', body: JSON.stringify(env) }),
 };

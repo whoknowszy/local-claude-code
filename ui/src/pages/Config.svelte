@@ -6,6 +6,12 @@
   let saved = $state(false)
   let editing = $state(false)
 
+  // Claude env state
+  let claudeEnv = $state({ base_url: '', api_key: '', api_key_raw: false })
+  let claudeEnvSaved = $state(false)
+  let claudeEnvError = $state('')
+  let claudeEnvEditing = $state(false)
+
   // Provider modal state
   let showModal = $state(false)
   let editingIdx = $state(-1)
@@ -95,6 +101,30 @@
   function cancelEdit() {
     load()
     editing = false
+  }
+
+  async function loadClaudeEnv() {
+    try {
+      claudeEnv = await api.getClaudeEnv()
+    } catch (e) {
+      claudeEnvError = e.message
+    }
+  }
+
+  $effect(() => { loadClaudeEnv() })
+
+  async function saveClaudeEnv() {
+    claudeEnvError = ''
+    claudeEnvSaved = false
+    try {
+      await api.updateClaudeEnv({ base_url: claudeEnv.base_url, api_key: claudeEnv.api_key })
+      claudeEnvSaved = true
+      claudeEnvEditing = false
+      loadClaudeEnv()
+      setTimeout(() => claudeEnvSaved = false, 2000)
+    } catch (e) {
+      claudeEnvError = e.message
+    }
   }
 </script>
 
@@ -295,6 +325,46 @@
           </select>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Claude Environment Variables -->
+  <div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+      <h2 style="margin-bottom: 0;">Claude 环境配置</h2>
+      {#if !claudeEnvEditing}
+        <button class="btn-primary" onclick={() => claudeEnvEditing = true}>编辑</button>
+      {:else}
+        <div style="display: flex; gap: 8px;">
+          <button class="btn-primary" onclick={saveClaudeEnv}>保存</button>
+          <button onclick={() => { claudeEnvEditing = false; loadClaudeEnv() }}>取消</button>
+        </div>
+      {/if}
+    </div>
+    {#if claudeEnvError}
+      <div style="color: var(--red); margin-bottom: 8px;">{claudeEnvError}</div>
+    {/if}
+    {#if claudeEnvSaved}
+      <div style="color: var(--green); margin-bottom: 8px;">已保存！</div>
+    {/if}
+    <div class="form-row">
+      <div class="form-group">
+        <label>ANTHROPIC_BASE_URL</label>
+        <input bind:value={claudeEnv.base_url}
+          disabled={!claudeEnvEditing}
+          placeholder="http://127.0.0.1:8765"
+          style="width: 100%;" />
+      </div>
+      <div class="form-group">
+        <label>ANTHROPIC_API_KEY</label>
+        <input type="password" bind:value={claudeEnv.api_key}
+          disabled={!claudeEnvEditing}
+          placeholder={claudeEnv.api_key_raw ? '（已设置，不留空则更新' : 'sk-placeholder'}
+          style="width: 100%;" />
+      </div>
+    </div>
+    <div style="font-size: 12px; color: var(--sidebar-text); margin-top: 4px;">
+      设置 Claude Code 使用的代理地址和认证信息。修改后需重启 Claude Code 生效。
     </div>
   </div>
 {:else}

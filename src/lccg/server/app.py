@@ -203,11 +203,13 @@ def create_app(
     from lccg.server.api.providers import router as providers_router
     from lccg.server.api.stats import router as stats_router
     from lccg.server.api.logs import router as logs_router
+    from lccg.server.api.claude_env import router as claude_env_router
 
     app.include_router(config_router)
     app.include_router(providers_router)
     app.include_router(stats_router)
     app.include_router(logs_router)
+    app.include_router(claude_env_router)
 
     # Mount UI static files (must be last so API routes take precedence)
     static_dir = Path(__file__).parent / "static"
