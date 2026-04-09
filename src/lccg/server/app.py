@@ -157,6 +157,7 @@ def create_app(
         from lccg.server.api.claude_env import _load as load_claude_env
         claude_env = load_claude_env()
         env_model = claude_env.get("model", "").strip()
+        stats_model = route.model
         if env_model:
             if env_model != route.model:
                 logger.info(
@@ -207,13 +208,13 @@ def create_app(
         if is_stream:
             return await _handle_streaming(
                 request, provider, payload, transformer,
-                health_tracker, route.provider_name, stats, route.model, route.scenario,
+                health_tracker, route.provider_name, stats, stats_model, route.scenario,
                 request_id=request_id, client_ip=client_ip,
             )
         else:
             return await _handle_non_streaming(
                 provider, payload, transformer, health_tracker, route.provider_name,
-                router, registry, body, config, stats, route.model, route.scenario,
+                router, registry, body, config, stats, stats_model, route.scenario,
                 request_id=request_id, client_ip=client_ip,
             )
 
