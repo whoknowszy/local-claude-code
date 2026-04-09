@@ -76,7 +76,7 @@ $exitCode = 0
     2>$errFile | Out-Null
 $exitCode = $LASTEXITCODE
 if ($exitCode -ne 0 -or -not (Get-Command lccg -ErrorAction SilentlyContinue)) {
-    $errContent = if (Test-Path $errFile) { Get-Content $errFile -Raw } else ""
+    $errContent = if (Test-Path $errFile) { Get-Content $errFile -Raw } else { "" }
     Write-Err "lccg 安装失败 (exit $exitCode)"
     if ($errContent) { Write-Host $errContent -ForegroundColor Red }
     Remove-Item $errFile -ErrorAction SilentlyContinue
@@ -139,7 +139,7 @@ if ($claudeCmd) {
     $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
     if ($npmCmd) {
         Write-Info "正在安装 Claude Code..."
-        $null = npm install -g @anthropic-ai/claude-code *>$null
+        npm install -g @anthropic-ai/claude-code 2>$null | Out-Null
         if ($LASTEXITCODE -eq 0) {
             Write-Success "Claude Code 安装完成"
         } else {
