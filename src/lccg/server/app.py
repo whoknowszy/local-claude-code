@@ -19,7 +19,7 @@ from lccg.config.schema import GatewayConfig
 from lccg.middleware.stats import StatsCollector
 from lccg.provider.health import ProviderHealth
 from lccg.provider.registry import ProviderRegistry
-from lccg.router.engine import RouterEngine
+from lccg.router.engine import RouterEngine, RouteResult
 from lccg.transformer.base import BaseTransformer
 
 logger = structlog.get_logger()
@@ -165,7 +165,7 @@ def create_app(
                     original_model=route.model,
                     override_model=env_model,
                 )
-            route = router.RouteResult(
+            route = RouteResult(
                 provider_name=route.provider_name,
                 model=env_model,
                 scenario=route.scenario,
@@ -181,7 +181,7 @@ def create_app(
                     original=route.provider_name,
                     fallback=fb_provider,
                 )
-                route = router.RouteResult(provider_name=fb_provider, model=fb_model, scenario=route.scenario)
+                route = RouteResult(provider_name=fb_provider, model=fb_model, scenario=route.scenario)
 
         # Get provider
         try:
