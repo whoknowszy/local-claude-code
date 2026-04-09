@@ -6,7 +6,7 @@
   let saved = $state(false)
   let editing = $state(false)
 
-  // Claude env state
+  // Claude settings state
   let claudeEnvJson = $state('')
   let claudeEnvSaved = $state(false)
   let claudeEnvError = $state('')
@@ -106,7 +106,7 @@
   async function loadClaudeEnv() {
     try {
       const data = await api.getClaudeEnv()
-      claudeEnvJson = JSON.stringify(data.raw || { base_url: data.base_url, api_key: data.api_key }, null, 2)
+      claudeEnvJson = JSON.stringify(data, null, 2)
     } catch (e) {
       claudeEnvError = e.message
     }
@@ -330,10 +330,10 @@
     </div>
   </div>
 
-  <!-- Claude Environment Variables -->
+  <!-- Claude Code Settings -->
   <div class="card">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-      <h2 style="margin-bottom: 0;">Claude 环境配置</h2>
+      <h2 style="margin-bottom: 0;">Claude Code 设置</h2>
       {#if !claudeEnvEditing}
         <button class="btn-primary" onclick={() => claudeEnvEditing = true}>编辑</button>
       {:else}
@@ -358,7 +358,7 @@
       ></textarea>
     </div>
     <div style="font-size: 12px; color: var(--sidebar-text); margin-top: 4px;">
-      Claude Code 环境变量配置。<code>model</code> 字段用于覆盖 Claude Code 发出的模型名称（如设为 <code>MiniMax-M2.7</code> 则所有请求使用该模型）。保存后需重启 Claude Code 生效。
+      直接编辑 Claude Code 的 <code>~/.claude/settings.json</code>，保存后立即生效。
     </div>
   </div>
 {:else}
