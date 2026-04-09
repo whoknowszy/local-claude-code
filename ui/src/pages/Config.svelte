@@ -7,7 +7,7 @@
   let editing = $state(false)
 
   // Claude env state
-  let claudeEnv = $state({ base_url: '', api_key: '', api_key_raw: false })
+  let claudeEnvJson = $state('')
   let claudeEnvSaved = $state(false)
   let claudeEnvError = $state('')
   let claudeEnvEditing = $state(false)
@@ -105,7 +105,8 @@
 
   async function loadClaudeEnv() {
     try {
-      claudeEnv = await api.getClaudeEnv()
+      const data = await api.getClaudeEnv()
+      claudeEnvJson = JSON.stringify(data.raw || { base_url: data.base_url, api_key: data.api_key }, null, 2)
     } catch (e) {
       claudeEnvError = e.message
     }
@@ -117,7 +118,8 @@
     claudeEnvError = ''
     claudeEnvSaved = false
     try {
-      await api.updateClaudeEnv({ base_url: claudeEnv.base_url, api_key: claudeEnv.api_key })
+      const parsed = JSON.parse(claudeEnvJson)
+      await api.updateClaudeEnv(parsed)
       claudeEnvSaved = true
       claudeEnvEditing = false
       loadClaudeEnv()
@@ -347,24 +349,16 @@
     {#if claudeEnvSaved}
       <div style="color: var(--green); margin-bottom: 8px;">已保存！</div>
     {/if}
-    <div class="form-row">
-      <div class="form-group">
-        <label>ANTHROPIC_BASE_URL</label>
-        <input bind:value={claudeEnv.base_url}
-          disabled={!claudeEnvEditing}
-          placeholder="http://127.0.0.1:8765"
-          style="width: 100%;" />
-      </div>
-      <div class="form-group">
-        <label>ANTHROPIC_API_KEY</label>
-        <input type="password" bind:value={claudeEnv.api_key}
-          disabled={!claudeEnvEditing}
-          placeholder={claudeEnv.api_key_raw ? '（已设置，不留空则更新' : 'sk-placeholder'}
-          style="width: 100%;" />
-      </div>
+    <div style="display: flex; gap: 8px; align-items: flex-start;">
+      <textarea
+        bind:value={claudeEnvJson}
+        disabled={!claudeEnvEditing}
+        rows="5"
+        style="font-family: monospace; font-size: 12px; resize: vertical; min-width: 300px; flex: 1;"
+      ></textarea>
     </div>
     <div style="font-size: 12px; color: var(--sidebar-text); margin-top: 4px;">
-      设置 Claude Code 使用的代理地址和认证信息。修改后需重启 Claude Code 生效。
+      Claude Code 环境变量配置，保存后需重启 Claude Code 生效。
     </div>
   </div>
 {:else}
