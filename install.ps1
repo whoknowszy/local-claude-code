@@ -69,8 +69,20 @@ Write-Info "确保 pip 可用..."
 
 # Install lccg
 Write-Info "安装 lccg..."
+$errFile = "$env:TEMP\lccg_install_err.txt"
+$exitCode = 0
 & $python -m pip install --force-reinstall --no-cache-dir --no-deps `
-    "git+https://github.com/whoknowszy/local-claude-code.git@main#egg=lccg" 2>&1 | Out-Null
+    "git+https://github.com/whoknowszy/local-claude-code.git@main#egg=lccg" `
+    2>$errFile | Out-Null
+$exitCode = $LASTEXITCODE
+if ($exitCode -ne 0 -or -not (Get-Command lccg -ErrorAction SilentlyContinue)) {
+    $errContent = if (Test-Path $errFile) { Get-Content $errFile -Raw } else ""
+    Write-Err "lccg 安装失败 (exit $exitCode)"
+    if ($errContent) { Write-Host $errContent -ForegroundColor Red }
+    Remove-Item $errFile -ErrorAction SilentlyContinue
+    exit 1
+}
+Remove-Item $errFile -ErrorAction SilentlyContinue
 Write-Success "lccg 安装完成"
 
 # Create config
@@ -127,7 +139,7 @@ if ($claudeCmd) {
     $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
     if ($npmCmd) {
         Write-Info "正在安装 Claude Code..."
-        npm install -g @anthropic-ai/claude-code 2>&1 | Out-Null
+        $null = npm install -g @anthropic-ai/claude-code *>$null
         if ($LASTEXITCODE -eq 0) {
             Write-Success "Claude Code 安装完成"
         } else {
