@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import os
 import json
 import uuid
 from contextlib import asynccontextmanager
@@ -150,6 +151,24 @@ def create_app(
             return JSONResponse(
                 status_code=400,
                 content={"error": {"type": "invalid_request_error", "message": str(e)}},
+            )
+
+        # Override model with ANTHROPIC_MODEL from claude-env.json if set
+        from lccg.server.api.claude_env import _load as load_claude_env
+        claude_env = load_claude_env()
+        env_model = claude_env.get("model", "").strip()
+        if env_model:
+            if env_model != route.model:
+                logger.info(
+                    "gateway.model_override",
+                    request_id=request_id,
+                    original_model=route.model,
+                    override_model=env_model,
+                )
+            route = router.RouteResult(
+                provider_name=route.provider_name,
+                model=env_model,
+                scenario=route.scenario,
             )
 
         # Check provider health, try fallback if unhealthy

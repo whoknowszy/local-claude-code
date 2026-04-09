@@ -22,7 +22,7 @@ def _load() -> dict:
             return json.loads(f.read_text(encoding="utf-8"))
         except Exception:
             pass
-    return {"base_url": "http://127.0.0.1:8765", "api_key": ""}
+    return {"base_url": "http://127.0.0.1:8765", "api_key": "", "model": ""}
 
 
 def _save(data: dict) -> None:
@@ -41,6 +41,7 @@ async def get_claude_env() -> dict:
     return {
         "base_url": data.get("base_url", ""),
         "api_key": api_key_display,
+        "model": data.get("model", ""),
         "raw": data,
     }
 
@@ -55,6 +56,7 @@ async def update_claude_env(request: Request) -> JSONResponse:
     data = {
         "base_url": str(body.get("base_url", "")).strip(),
         "api_key": str(body.get("api_key", "")).strip(),
+        "model": str(body.get("model", "")).strip(),
     }
 
     try:

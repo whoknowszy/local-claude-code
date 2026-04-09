@@ -358,7 +358,7 @@
       ></textarea>
     </div>
     <div style="font-size: 12px; color: var(--sidebar-text); margin-top: 4px;">
-      Claude Code 环境变量配置，保存后需重启 Claude Code 生效。
+      Claude Code 环境变量配置。<code>model</code> 字段用于覆盖 Claude Code 发出的模型名称（如设为 <code>MiniMax-M2.7</code> 则所有请求使用该模型）。保存后需重启 Claude Code 生效。
     </div>
   </div>
 {:else}
