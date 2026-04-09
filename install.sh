@@ -59,6 +59,17 @@ ensure_pip() {
 
 install_lccg() {
     info "安装 lccg..."
+    # Try pipx first (common on macOS)
+    if command -v pipx &>/dev/null; then
+        info "使用 pipx 安装..."
+        pipx uninstall lccg 2>/dev/null || true
+        pipx install "git+https://github.com/whoknowszy/local-claude-code.git@main#egg=lccg" 2>/dev/null
+        if [[ $? -eq 0 ]]; then
+            success "lccg 安装完成（pipx）"
+            return
+        fi
+    fi
+    # Fallback to direct pip
     $PYTHON_CMD -m pip install --force-reinstall --no-cache-dir --no-deps \
         "git+https://github.com/whoknowszy/local-claude-code.git@main#egg=lccg"
     success "lccg 安装完成"
