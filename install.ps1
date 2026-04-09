@@ -65,12 +65,11 @@ if (-not $SkipPythonCheck) {
 
 # Ensure pip
 Write-Info "确保 pip 可用..."
-$pipCmd = "$python -m pip"
-& $pipCmd install --upgrade pip 2>$null | Out-Null
+& $python -m pip install --upgrade pip 2>$null | Out-Null
 
 # Install lccg
 Write-Info "安装 lccg..."
-& $pipCmd install --force-reinstall --no-cache-dir --no-deps `
+& $python -m pip install --force-reinstall --no-cache-dir --no-deps `
     "git+https://github.com/whoknowszy/local-claude-code.git@main#egg=lccg" 2>&1 | Out-Null
 Write-Success "lccg 安装完成"
 

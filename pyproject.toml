@@ -36,6 +36,14 @@ lccg = "lccg.cli.main:cli"
 [tool.hatch.build.targets.wheel]
 packages = ["src/lccg"]
 
+[tool.hatch.build.targets.sdist]
+include = [
+    "ui/src/**/*",
+    "ui/package.json",
+    "ui/svelte.config.js",
+    "ui/vite.config.ts",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py39"
