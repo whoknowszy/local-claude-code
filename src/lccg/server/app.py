@@ -44,17 +44,38 @@ def _mask_body(body: dict[str, Any], model: str = "") -> dict[str, Any]:
     if body.get("temperature"):
         result["temperature"] = body["temperature"]
 
-    # Tools info
+    # Tools info - full list for debugging subagent requests
     tools = body.get("tools", [])
     if tools:
-        result["tools"] = [t.get("name", "?") for t in tools[:5]]
-        if len(tools) > 5:
-            result["tools"].append(f"...+{len(tools) - 5}")
+        tool_names = [t.get("name", "?") for t in tools]
+        result["tools"] = tool_names[:10]  # First 10 tools
+        if len(tools) > 10:
+            result["tools"].append(f"...+{len(tools) - 10}")
+        # NOTE: Agent tool presence means the *main session* is making the request
+        # (it has all tools including Agent to delegate to subagents).
+        # A subagent's own request does NOT have the Agent tool.
+        # So has_agent_tool=true actually means "NOT a subagent (is main session)".
+        # We leave is_subagent detection to future improvement.
+        result["has_agent_tool"] = "Agent" in tool_names
 
     # Thinking info
     thinking = body.get("thinking")
     if thinking:
         result["thinking"] = thinking.get("type", "enabled")
+
+    # Subagent detection: has_agent_tool = "Agent" in tool_names
+    # - Main session: has Agent tool (can delegate to subagents) -> has_agent_tool=True
+    # - Subagent: does NOT have Agent tool (is a leaf agent) -> has_agent_tool=False
+    result["is_subagent"] = not result["has_agent_tool"]
+
+    # Check for system prompt indicators
+    system_prompt = ""
+    for msg in messages:
+        if msg.get("role") == "system":
+            system_prompt = msg.get("content", "")[:200]
+            break
+    if system_prompt:
+        result["system_prompt_preview"] = system_prompt[:100]
 
     return result
 
@@ -130,9 +151,29 @@ def create_app(
                 content={"error": {"type": "invalid_request_error", "message": "Invalid JSON body"}},
             )
 
+        # Full request body for debugging subagent detection
+        try:
+            body_str = json.dumps(body, ensure_ascii=False, indent=2)
+        except Exception:
+            body_str = "<serialization failed>"
+        logger.info("gateway.full_request_body", request_id=request_id, body=body_str)
+
+        # Extract all headers for subagent debugging
+        headers_dict = dict(request.headers)
+        # Mask sensitive headers
+        headers_to_log = {k: (v[:20] + "..." if len(v) > 20 else v) for k, v in headers_dict.items()}
+        # Look for agent-related headers
+        agent_headers = {k: v for k, v in headers_dict.items() if "agent" in k.lower() or "subagent" in k.lower() or "x-claude" in k.lower()}
+
         # Log incoming request
         model = body.get("model", "")
         is_stream = body.get("stream", False)
+        masked_body = _mask_body(body, model)
+
+        # Additional debug logging for subagent detection
+        has_agent = masked_body.get("has_agent_tool", False)
+        is_subagent = masked_body.get("is_subagent", False)
+
         logger.info(
             "gateway.request",
             request_id=request_id,
@@ -141,7 +182,11 @@ def create_app(
             method="POST",
             model=model,
             stream=is_stream,
-            summary=_mask_body(body, model),
+            summary=masked_body,
+            has_agent_tool=has_agent,
+            is_subagent_request=is_subagent,
+            agent_headers=agent_headers or None,
+            all_headers=headers_to_log,
         )
 
         # Resolve route
@@ -152,6 +197,29 @@ def create_app(
                 status_code=400,
                 content={"error": {"type": "invalid_request_error", "message": str(e)}},
             )
+
+        # [临时] subagent + claude-opus-4-6 硬路由到 mimo-v2-pro
+        if is_subagent and model == "claude-opus-4-6":
+            from lccg.router.engine import RouteResult
+            route = RouteResult(provider_name="xiaomi", model="mimo-v2-pro", scenario=None)
+            logger.info(
+                "gateway.subagent_hard_override",
+                request_id=request_id,
+                original_model=model,
+                override_model="mimo-v2-pro",
+                provider="xiaomi",
+            )
+
+        # Log route resolution for subagent debugging
+        logger.info(
+            "gateway.route_resolved",
+            request_id=request_id,
+            original_model_in_body=model,
+            resolved_provider=route.provider_name,
+            resolved_model=route.model,
+            scenario=route.scenario,
+            is_subagent=is_subagent,
+        )
 
         # Override model with ANTHROPIC_MODEL from claude-env.json if set
         from lccg.server.api.claude_env import _load as load_claude_env
@@ -165,6 +233,7 @@ def create_app(
                     request_id=request_id,
                     original_model=route.model,
                     override_model=env_model,
+                    is_subagent=is_subagent,
                 )
             route = RouteResult(
                 provider_name=route.provider_name,
