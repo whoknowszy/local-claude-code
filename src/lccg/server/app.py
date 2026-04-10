@@ -57,6 +57,8 @@ def _mask_body(body: dict[str, Any], model: str = "") -> dict[str, Any]:
         # So has_agent_tool=true actually means "NOT a subagent (is main session)".
         # We leave is_subagent detection to future improvement.
         result["has_agent_tool"] = "Agent" in tool_names
+    else:
+        result["has_agent_tool"] = False
 
     # Thinking info
     thinking = body.get("thinking")
@@ -200,7 +202,6 @@ def create_app(
 
         # [临时] subagent + claude-opus-4-6 硬路由到 mimo-v2-pro
         if is_subagent and model == "claude-opus-4-6":
-            from lccg.router.engine import RouteResult
             route = RouteResult(provider_name="xiaomi", model="mimo-v2-pro", scenario=None)
             logger.info(
                 "gateway.subagent_hard_override",
