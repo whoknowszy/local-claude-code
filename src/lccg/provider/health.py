@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import time
 
+import structlog
+
+logger = structlog.get_logger()
+
 
 class ProviderHealth:
     """Track provider health status.
@@ -37,7 +41,22 @@ class ProviderHealth:
         """Record a failure for the provider."""
         self._failures[provider_name] = self._failures.get(provider_name, 0) + 1
         self._last_failure_time[provider_name] = time.monotonic()
+        failures = self._failures[provider_name]
+        if failures == self._threshold:
+            logger.warning(
+                "provider_health.degraded",
+                provider=provider_name,
+                failures=failures,
+                threshold=self._threshold,
+                next_recovery_in_s=self._recovery,
+            )
 
     def record_success(self, provider_name: str) -> None:
         """Reset failure count on success."""
+        was_unhealthy = self._failures.get(provider_name, 0) >= self._threshold
         self._failures[provider_name] = 0
+        if was_unhealthy:
+            logger.info(
+                "provider_health.recovered",
+                provider=provider_name,
+            )

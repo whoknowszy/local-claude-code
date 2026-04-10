@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from lccg.config.schema import GatewayConfig
+from lccg.log_config import setup_exception_logger
 from lccg.middleware.stats import StatsCollector
 from lccg.provider.health import ProviderHealth
 from lccg.provider.registry import ProviderRegistry
@@ -97,6 +98,7 @@ def create_app(
     log_queue: Any = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application."""
+    setup_exception_logger(config.logging.log_dir)
     health_tracker = ProviderHealth()
     stats = StatsCollector()
 
@@ -280,6 +282,7 @@ def create_app(
                 request, provider, payload, transformer,
                 health_tracker, route.provider_name, stats, stats_model, route.scenario,
                 request_id=request_id, client_ip=client_ip,
+                router=router, registry=registry, body=body, config=config,
             )
         else:
             return await _handle_non_streaming(
@@ -370,8 +373,8 @@ async def _handle_non_streaming(
                 resp = e.response
                 status = resp.status_code
                 try:
-                    body = resp.json()
-                    error_detail = f"status={status} body={json.dumps(body, ensure_ascii=False)[:300]}"
+                    resp_body = resp.json()
+                    error_detail = f"status={status} body={json.dumps(resp_body, ensure_ascii=False)[:300]}"
                 except Exception:
                     try:
                         body_text = resp.text
@@ -389,6 +392,7 @@ async def _handle_non_streaming(
             provider=provider_name,
             model=model,
             error=error_detail,
+            error_type=type(e).__name__,
             latency_ms=latency,
         )
 
@@ -498,8 +502,12 @@ async def _handle_streaming(
     scenario: str | None = None,
     request_id: str = "",
     client_ip: str = "",
+    router: RouterEngine | None = None,
+    registry: ProviderRegistry | None = None,
+    body: dict[str, Any] | None = None,
+    config: GatewayConfig | None = None,
 ) -> StreamingResponse:
-    """Handle streaming request - proxy SSE events from provider to client."""
+    """Handle streaming request with fallback support."""
     timer = stats.start_timer() if stats else None
     usage_info = {"input_tokens": 0, "output_tokens": 0}
     disconnected = False
@@ -558,10 +566,79 @@ async def _handle_streaming(
                 provider=provider_name,
                 model=model,
                 error=str(e),
+                error_type=type(e).__name__,
                 latency_ms=latency,
             )
             if timer:
                 timer.finish(provider=provider_name, model=model, status="error", error=str(e), scenario=scenario)
+
+            # Try fallback if available (mirrors _handle_non_streaming fallback)
+            if (
+                config and router and registry and body
+                and config.router.fallback
+            ):
+                fb_provider_name, fb_model = RouterEngine._parse_route(config.router.fallback)
+                if fb_provider_name != provider_name:
+                    logger.warning(
+                        "gateway.stream_fallback",
+                        request_id=request_id,
+                        from_provider=provider_name,
+                        to_provider=fb_provider_name,
+                        error=str(e),
+                    )
+                    try:
+                        fb_provider = registry.get_provider(fb_provider_name)
+                        fb_transformer = registry.get_transformer_for_provider(fb_provider_name)
+                        fb_body = {**body, "model": fb_model}
+                        fb_payload = fb_transformer.transform_request(fb_body)
+                        fb_stream = fb_provider.stream_response(fb_payload)
+                        async for chunk in fb_transformer.transform_stream(fb_stream):
+                            if await request.is_disconnected():
+                                break
+                            reason = _extract_streaming_usage(chunk, usage_info)
+                            if reason:
+                                finish_reason = reason
+                            yield chunk
+                        health_tracker.record_success(fb_provider_name)
+                        fb_latency = round(timer.elapsed_ms, 1) if timer else 0
+                        if timer:
+                            timer.finish(
+                                provider=fb_provider_name, model=fb_model, status="success",
+                                input_tokens=usage_info["input_tokens"],
+                                output_tokens=usage_info["output_tokens"],
+                                scenario=scenario,
+                            )
+                        logger.info(
+                            "gateway.stream_done",
+                            request_id=request_id,
+                            client_ip=client_ip,
+                            provider=fb_provider_name,
+                            model=fb_model,
+                            scenario=scenario or None,
+                            finish_reason=finish_reason,
+                            input_tokens=usage_info["input_tokens"],
+                            output_tokens=usage_info["output_tokens"],
+                            latency_ms=fb_latency,
+                            via_fallback=True,
+                        )
+                        return  # fallback succeeded, stop generator
+                    except Exception as fb_error:
+                        health_tracker.record_failure(fb_provider_name)
+                        fb_latency = round(timer.elapsed_ms, 1) if timer else 0
+                        logger.error(
+                            "gateway.stream_error",
+                            request_id=request_id,
+                            client_ip=client_ip,
+                            provider=fb_provider_name,
+                            model=fb_model,
+                            error=str(fb_error),
+                            error_type=type(fb_error).__name__,
+                            latency_ms=fb_latency,
+                            fallback_failed=True,
+                        )
+                        if timer:
+                            timer.finish(provider=fb_provider_name, model=fb_model, status="error", error=str(fb_error), scenario=scenario)
+
             error_event = {
                 "type": "error",
                 "error": {

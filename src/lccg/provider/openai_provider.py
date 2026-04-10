@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import traceback
 from typing import Any, AsyncIterator
 
 import httpx
@@ -67,12 +68,40 @@ class OpenAIProvider(BaseProvider):
             body=json.dumps(payload, ensure_ascii=False),
         )
 
-        response = await self.client.post(
-            self._base_url,
-            json=payload,
-        )
-
-        resp_raw = await response.aread()
+        try:
+            response = await self.client.post(
+                self._base_url,
+                json=payload,
+            )
+            resp_raw = await response.aread()
+        except httpx.TimeoutException as e:
+            logger.error(
+                "openai_provider.timeout",
+                provider=self.name,
+                url=self._base_url,
+                error_type=type(e).__name__,
+                timeout_config=self.config.timeout,
+                traceback=traceback.format_exc(),
+            )
+            raise
+        except httpx.ConnectError as e:
+            logger.error(
+                "openai_provider.connect_error",
+                provider=self.name,
+                url=self._base_url,
+                error_type=type(e).__name__,
+                traceback=traceback.format_exc(),
+            )
+            raise
+        except Exception as e:
+            logger.error(
+                "openai_provider.request_error",
+                provider=self.name,
+                url=self._base_url,
+                error_type=type(e).__name__,
+                traceback=traceback.format_exc(),
+            )
+            raise
         resp_headers = dict(response.headers)
         try:
             resp_text = gzip.decompress(resp_raw)
@@ -105,12 +134,31 @@ class OpenAIProvider(BaseProvider):
             url=self._base_url,
         )
 
-        async with self.client.stream(
-            "POST",
-            self._base_url,
-            json=payload,
-        ) as response:
-            response.raise_for_status()
-            async for chunk in response.aiter_bytes():
-                if chunk:
-                    yield chunk
+        try:
+            async with self.client.stream(
+                "POST",
+                self._base_url,
+                json=payload,
+            ) as response:
+                response.raise_for_status()
+                async for chunk in response.aiter_bytes():
+                    if chunk:
+                        yield chunk
+        except httpx.TimeoutException as e:
+            logger.error(
+                "openai_provider.stream_timeout",
+                provider=self.name,
+                url=self._base_url,
+                error_type=type(e).__name__,
+                traceback=traceback.format_exc(),
+            )
+            raise
+        except Exception as e:
+            logger.error(
+                "openai_provider.stream_error",
+                provider=self.name,
+                url=self._base_url,
+                error_type=type(e).__name__,
+                traceback=traceback.format_exc(),
+            )
+            raise

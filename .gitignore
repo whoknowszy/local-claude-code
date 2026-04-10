@@ -25,6 +25,7 @@ misc.xml
 
 # Logs
 *.log
+logs/
 
 # Environment
 .env
