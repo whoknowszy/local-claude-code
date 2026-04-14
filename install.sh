@@ -58,17 +58,55 @@ ensure_pip() {
 }
 
 install_lccg() {
+    local REPO_URL="git+https://github.com/whoknowszy/local-claude-code.git@main"
     info "安装 lccg..."
-    if ! $PYTHON_CMD -m pip install --force-reinstall --no-cache-dir \
-        "git+https://github.com/whoknowszy/local-claude-code.git@main#egg=lccg"; then
-        error "lccg 安装失败，请检查网络连接和 Python 版本"
-        info "排查建议:"
-        info "  1. 确保网络可以访问 GitHub"
-        info "  2. 尝试使用代理: export https_proxy=http://your-proxy:port"
-        info "  3. 手动安装: pip install git+https://github.com/whoknowszy/local-claude-code.git"
-        exit 1
+
+    # 方式1：uv（推荐，最快）
+    if command -v uv &>/dev/null; then
+        info "检测到 uv，使用 uv 安装..."
+        if uv tool install --force "$REPO_URL" 2>/dev/null; then
+            success "lccg 安装完成（via uv）"
+            info "提示: uv 安装的命令位于 ~/.local/bin，请确保该路径在 PATH 中"
+            return 0
+        fi
+        warn "uv tool install 失败，尝试其他方式..."
     fi
-    success "lccg 安装完成"
+
+    # 方式2：pipx（隔离环境，推荐）
+    if command -v pipx &>/dev/null; then
+        info "检测到 pipx，使用 pipx 安装..."
+        if pipx install --force "$REPO_URL" 2>/dev/null; then
+            success "lccg 安装完成（via pipx）"
+            return 0
+        fi
+        warn "pipx install 失败，尝试其他方式..."
+    fi
+
+    # 方式3：pip（兼容传统环境）
+    info "使用 pip 安装..."
+    if $PYTHON_CMD -m pip install --force-reinstall --no-cache-dir "$REPO_URL" 2>/dev/null; then
+        success "lccg 安装完成（via pip）"
+        return 0
+    fi
+
+    # 方式4：pip + --break-system-packages（PEP 668 兼容）
+    info "检测到受管理的 Python 环境，尝试 --break-system-packages..."
+    if $PYTHON_CMD -m pip install --force-reinstall --no-cache-dir --break-system-packages "$REPO_URL" 2>/dev/null; then
+        success "lccg 安装完成（via pip --break-system-packages）"
+        return 0
+    fi
+
+    # 所有方式都失败
+    error "lccg 安装失败"
+    error "请尝试以下方式手动安装："
+    error "  方式1: uv tool install $REPO_URL"
+    error "  方式2: pipx install $REPO_URL"
+    error "  方式3: pip install --break-system-packages $REPO_URL"
+    info "排查建议:"
+    info "  1. 确保网络可以访问 GitHub"
+    info "  2. 尝试使用代理: export https_proxy=http://your-proxy:port"
+    info "  3. 检查 Python 版本: $PYTHON_CMD --version"
+    exit 1
 }
 
 create_config() {

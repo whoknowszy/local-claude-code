@@ -69,23 +69,98 @@ Write-Info "确保 pip 可用..."
 
 # Install lccg
 Write-Info "安装 lccg..."
-# Write pip command to a temp .bat file and run via cmd /c
-# This is the only reliable way to suppress Python's Information stream (stream #6)
-# in PowerShell 5.x — all output stays inside cmd and gets swallowed by >NUL
-$bat = "$env:TEMP\lccg_install_$PID.bat"
-@"
+$REPO_URL = "git+https://github.com/whoknowszy/local-claude-code.git@main"
+$installSuccess = $false
+
+# 方式1：uv（推荐，最快）
+$uvCmd = Get-Command uv -ErrorAction SilentlyContinue
+if ($uvCmd) {
+    Write-Info "检测到 uv，使用 uv 安装..."
+    $bat = "$env:TEMP\lccg_install_uv_$PID.bat"
+    @"
 @echo off
-"$python" -m pip install --force-reinstall --no-cache-dir "git+https://github.com/whoknowszy/local-claude-code.git@main#egg=lccg" >NUL 2>&1
+uv tool install --force "$REPO_URL" >NUL 2>&1
 exit /b %ERRORLEVEL%
 "@ | Out-File -FilePath $bat -Encoding ASCII
-cmd /c $bat
-$exitCode = $LASTEXITCODE
-Remove-Item $bat -ErrorAction SilentlyContinue
-if ($exitCode -ne 0) {
-    Write-Err "lccg 安装失败 (exit code: $exitCode)"
+    cmd /c $bat
+    $uvExitCode = $LASTEXITCODE
+    Remove-Item $bat -ErrorAction SilentlyContinue
+    if ($uvExitCode -eq 0) {
+        Write-Success "lccg 安装完成（via uv）"
+        Write-Info "提示: uv 安装的命令位于 ~/.local/bin，请确保该路径在 PATH 中"
+        $installSuccess = $true
+    } else {
+        Write-Warn "uv tool install 失败，尝试其他方式..."
+    }
+}
+
+# 方式2：pipx（隔离环境，推荐）
+if (-not $installSuccess) {
+    $pipxCmd = Get-Command pipx -ErrorAction SilentlyContinue
+    if ($pipxCmd) {
+        Write-Info "检测到 pipx，使用 pipx 安装..."
+        $bat = "$env:TEMP\lccg_install_pipx_$PID.bat"
+        @"
+@echo off
+pipx install --force "$REPO_URL" >NUL 2>&1
+exit /b %ERRORLEVEL%
+"@ | Out-File -FilePath $bat -Encoding ASCII
+        cmd /c $bat
+        $pipxExitCode = $LASTEXITCODE
+        Remove-Item $bat -ErrorAction SilentlyContinue
+        if ($pipxExitCode -eq 0) {
+            Write-Success "lccg 安装完成（via pipx）"
+            $installSuccess = $true
+        } else {
+            Write-Warn "pipx install 失败，尝试其他方式..."
+        }
+    }
+}
+
+# 方式3：pip（兼容传统环境）
+if (-not $installSuccess) {
+    Write-Info "使用 pip 安装..."
+    $bat = "$env:TEMP\lccg_install_pip_$PID.bat"
+    @"
+@echo off
+"$python" -m pip install --force-reinstall --no-cache-dir "$REPO_URL" >NUL 2>&1
+exit /b %ERRORLEVEL%
+"@ | Out-File -FilePath $bat -Encoding ASCII
+    cmd /c $bat
+    $pipExitCode = $LASTEXITCODE
+    Remove-Item $bat -ErrorAction SilentlyContinue
+    if ($pipExitCode -eq 0) {
+        Write-Success "lccg 安装完成（via pip）"
+        $installSuccess = $true
+    }
+}
+
+# 方式4：pip + --break-system-packages（PEP 668 兼容）
+if (-not $installSuccess) {
+    Write-Info "检测到受管理的 Python 环境，尝试 --break-system-packages..."
+    $bat = "$env:TEMP\lccg_install_pip_break_$PID.bat"
+    @"
+@echo off
+"$python" -m pip install --force-reinstall --no-cache-dir --break-system-packages "$REPO_URL" >NUL 2>&1
+exit /b %ERRORLEVEL%
+"@ | Out-File -FilePath $bat -Encoding ASCII
+    cmd /c $bat
+    $pipBreakExitCode = $LASTEXITCODE
+    Remove-Item $bat -ErrorAction SilentlyContinue
+    if ($pipBreakExitCode -eq 0) {
+        Write-Success "lccg 安装完成（via pip --break-system-packages）"
+        $installSuccess = $true
+    }
+}
+
+# 所有方式都失败
+if (-not $installSuccess) {
+    Write-Err "lccg 安装失败"
     Write-Host ""
-    Write-Host "  请手动运行以下命令排查：" -ForegroundColor Yellow
-    Write-Host "  $python -m pip install --force-reinstall --no-cache-dir `"git+https://github.com/whoknowszy/local-claude-code.git@main#egg=lccg`"" -ForegroundColor Gray
+    Write-Host "  请尝试以下方式手动安装：" -ForegroundColor Yellow
+    Write-Host "    方式1: uv tool install $REPO_URL" -ForegroundColor Gray
+    Write-Host "    方式2: pipx install $REPO_URL" -ForegroundColor Gray
+    Write-Host "    方式3: pip install --break-system-packages $REPO_URL" -ForegroundColor Gray
     Write-Host ""
     Write-Host "  常见问题排查：" -ForegroundColor Yellow
     Write-Host "    1. 检查网络连接和 GitHub 访问" -ForegroundColor Gray
@@ -94,7 +169,6 @@ if ($exitCode -ne 0) {
     Write-Host "    4. 检查 Git 是否安装: git --version" -ForegroundColor Gray
     exit 1
 }
-Write-Success "lccg 安装完成"
 
 # Create config
 $configDir = "$HOME\.lccg"
