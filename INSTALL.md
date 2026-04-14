@@ -107,16 +107,41 @@ irm https://raw.githubusercontent.com/whoknowszy/local-claude-code/main/install.
 
 ---
 
-## 启动
+## 使用
+
+### 推荐：一键启动
 
 ```bash
+lccg code
+```
+
+自动完成以下操作：
+- 检测网关是否已运行（避免端口冲突）
+- 启动网关（如需要）
+- 注入环境变量（无需手动 export）
+- 启动 Claude Code
+
+### 手动管理网关
+
+```bash
+# 启动网关
 lccg serve
+
+# 查看状态
+lccg status
+
+# 停止后台网关
+lccg stop
 ```
 
 启动后访问 http://127.0.0.1:8765/ui/ 查看仪表盘。
 
-让 Claude Code 使用本 Gateway：
+### 传统方式（已废弃）
+
+如需手动设置环境变量：
 
 ```bash
 export ANTHROPIC_BASE_URL=http://127.0.0.1:8765
 ```
+
+> 注意：使用 `lccg code` 时无需手动设置环境变量，命令会自动处理。

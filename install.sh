@@ -59,8 +59,15 @@ ensure_pip() {
 
 install_lccg() {
     info "安装 lccg..."
-    $PYTHON_CMD -m pip install --force-reinstall --no-cache-dir --no-deps \
-        "git+https://github.com/whoknowszy/local-claude-code.git@main#egg=lccg"
+    if ! $PYTHON_CMD -m pip install --force-reinstall --no-cache-dir \
+        "git+https://github.com/whoknowszy/local-claude-code.git@main#egg=lccg"; then
+        error "lccg 安装失败，请检查网络连接和 Python 版本"
+        info "排查建议:"
+        info "  1. 确保网络可以访问 GitHub"
+        info "  2. 尝试使用代理: export https_proxy=http://your-proxy:port"
+        info "  3. 手动安装: pip install git+https://github.com/whoknowszy/local-claude-code.git"
+        exit 1
+    fi
     success "lccg 安装完成"
 }
 
@@ -113,12 +120,21 @@ detect_and_install_claude() {
     else
         warn "Claude Code 未安装，尝试安装..."
         if ! command -v npm &>/dev/null; then
-            warn "npm 未找到，请先安装 Node.js: https://nodejs.org/"
-            warn "安装 Claude Code 后，手动运行: npm install -g @anthropic-ai/claude-code"
+            warn "npm 未找到，请先安装 Node.js"
+            info "  下载地址: https://nodejs.org/"
+            info "  或使用 brew: brew install node"
+            info "  安装 Node.js 后，手动运行:"
+            info "    npm install -g @anthropic-ai/claude-code"
         else
-            npm install -g @anthropic-ai/claude-code 2>/dev/null && \
-                success "Claude Code 安装完成" || \
-                warn "Claude Code 安装失败，请手动安装: npm install -g @anthropic-ai/claude-code"
+            if npm install -g @anthropic-ai/claude-code 2>/dev/null; then
+                success "Claude Code 安装完成"
+            else
+                warn "Claude Code 安装失败"
+                info "请手动安装:"
+                info "  npm install -g @anthropic-ai/claude-code"
+                info "如果权限不足，尝试:"
+                info "  sudo npm install -g @anthropic-ai/claude-code"
+            fi
         fi
     fi
 }
@@ -126,7 +142,7 @@ detect_and_install_claude() {
 configure_env() {
     info "配置环境变量..."
     # Determine which profile file to use
-    if [[ -n "$ZSH_VERSION" ]] || [[ "$OS" == "Darwin" && -d "$HOME/.zshrc" ]]; then
+    if [[ -n "$ZSH_VERSION" ]]; then
         PROFILE="$HOME/.zshrc"
     elif [[ -f "$HOME/.bashrc" ]]; then
         PROFILE="$HOME/.bashrc"
@@ -141,26 +157,18 @@ configure_env() {
         touch "$PROFILE"
     fi
 
-    # Lines to add
-    LCCG_BASE="export ANTHROPIC_BASE_URL=http://127.0.0.1:8765"
-    LCCG_KEY='export ANTHROPIC_API_KEY="sk-placeholder"'
+    # 使用标记注释检查是否已配置
+    if grep -q "# LCCG Gateway" "$PROFILE" 2>/dev/null; then
+        info "LCCG 环境变量已配置: $PROFILE"
+    else
+        cat >> "$PROFILE" << 'EOF'
 
-    # Add if not already present
-    ADDED=false
-    if ! grep -q "ANTHROPIC_BASE_URL.*127.0.0.1:8765" "$PROFILE" 2>/dev/null; then
-        echo "" >> "$PROFILE"
-        echo "# LCCG Gateway" >> "$PROFILE"
-        echo "$LCCG_BASE" >> "$PROFILE"
-        echo "$LCCG_KEY" >> "$PROFILE"
-        ADDED=true
-    fi
-
-    if [[ "$ADDED" == "true" ]]; then
+# LCCG Gateway
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8765
+EOF
         success "已添加到 $PROFILE"
         info "环境变量将在下次打开终端时生效"
         info "立即生效请运行: source $PROFILE"
-    else
-        info "环境变量已配置: $PROFILE"
     fi
 }
 
@@ -191,13 +199,29 @@ main() {
     detect_and_install_claude
     configure_env
 
+    # 验证安装
+    info "验证安装..."
+    if $PYTHON_CMD -m lccg --version &>/dev/null; then
+        success "lccg 安装验证通过"
+    else
+        warn "lccg 命令验证失败，请检查 Python PATH"
+    fi
+
     echo ""
     success "安装完成！"
     echo ""
-    echo -e "  启动 Gateway:  ${GREEN}lccg serve${NC}"
+    echo -e "  ${GREEN}推荐使用:${NC}"
+    echo -e "    lccg code              一键启动网关 + Claude Code"
+    echo ""
+    echo -e "  ${GREEN}手动管理:${NC}"
+    echo -e "    lccg serve             启动网关"
+    echo -e "    lccg status            查看网关状态"
+    echo -e "    lccg stop              停止后台网关"
+    echo ""
     echo -e "  编辑配置:      ${GREEN}~/.lccg/config.yaml${NC}"
     echo ""
     echo -e "  ${YELLOW}重要: 请编辑 ~/.lccg/config.yaml 添加你的 Provider API Key${NC}"
+    echo -e "  ${YELLOW}提示: lccg code 会自动处理 ANTHROPIC_API_KEY，无需手动设置${NC}"
     echo ""
     echo -e "  文档: https://github.com/whoknowszy/local-claude-code"
     echo ""

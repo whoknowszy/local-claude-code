@@ -75,15 +75,23 @@ Write-Info "安装 lccg..."
 $bat = "$env:TEMP\lccg_install_$PID.bat"
 @"
 @echo off
-"$python" -m pip install --force-reinstall --no-cache-dir --no-deps "git+https://github.com/whoknowszy/local-claude-code.git@main#egg=lccg" >NUL 2>&1
+"$python" -m pip install --force-reinstall --no-cache-dir "git+https://github.com/whoknowszy/local-claude-code.git@main#egg=lccg" >NUL 2>&1
 exit /b %ERRORLEVEL%
 "@ | Out-File -FilePath $bat -Encoding ASCII
 cmd /c $bat
 $exitCode = $LASTEXITCODE
 Remove-Item $bat -ErrorAction SilentlyContinue
-if ($exitCode -ne 0 -or -not (Get-Command lccg -ErrorAction SilentlyContinue)) {
-    Write-Err "lccg 安装失败，请手动运行以下命令排查："
-    Write-Host "  $python -m pip install --force-reinstall --no-cache-dir --no-deps `"git+https://github.com/whoknowszy/local-claude-code.git@main#egg=lccg`"" -ForegroundColor Gray
+if ($exitCode -ne 0) {
+    Write-Err "lccg 安装失败 (exit code: $exitCode)"
+    Write-Host ""
+    Write-Host "  请手动运行以下命令排查：" -ForegroundColor Yellow
+    Write-Host "  $python -m pip install --force-reinstall --no-cache-dir `"git+https://github.com/whoknowszy/local-claude-code.git@main#egg=lccg`"" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  常见问题排查：" -ForegroundColor Yellow
+    Write-Host "    1. 检查网络连接和 GitHub 访问" -ForegroundColor Gray
+    Write-Host "    2. 确保 pip 可用: $python -m pip --version" -ForegroundColor Gray
+    Write-Host "    3. 尝试升级 pip: $python -m pip install --upgrade pip" -ForegroundColor Gray
+    Write-Host "    4. 检查 Git 是否安装: git --version" -ForegroundColor Gray
     exit 1
 }
 Write-Success "lccg 安装完成"
@@ -156,36 +164,48 @@ if ($claudeCmd) {
 
 # Configure environment variables
 Write-Info "配置环境变量..."
-$added = $false
-$userEnv = "HKCU:\Environment"
 
-# ANTHROPIC_BASE_URL
-$existingUrl = [Environment]::GetEnvironmentVariable("ANTHROPIC_BASE_URL", "User")
-if ($existingUrl -notlike "*127.0.0.1*") {
+# 只设置 ANTHROPIC_BASE_URL，不设置 API_KEY 占位符
+# lccg code 命令会自动处理 API_KEY 的传递
+$currentBaseUrl = [Environment]::GetEnvironmentVariable("ANTHROPIC_BASE_URL", "User")
+if (-not $currentBaseUrl) {
     [Environment]::SetEnvironmentVariable("ANTHROPIC_BASE_URL", "http://127.0.0.1:8765", "User")
-    $added = $true
-}
-
-# ANTHROPIC_API_KEY
-$existingKey = [Environment]::GetEnvironmentVariable("ANTHROPIC_API_KEY", "User")
-if ([string]::IsNullOrEmpty($existingKey)) {
-    [Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY", "sk-placeholder", "User")
-    $added = $true
-}
-
-if ($added) {
-    Write-Success "已添加到用户环境变量（当前会话需重启或重新打开终端）"
+    $env:ANTHROPIC_BASE_URL = "http://127.0.0.1:8765"
+    Write-Success "已设置 ANTHROPIC_BASE_URL"
+} elseif ($currentBaseUrl -like "*127.0.0.1*") {
+    Write-Info "ANTHROPIC_BASE_URL 已配置: $currentBaseUrl"
 } else {
-    Write-Info "环境变量已配置"
+    Write-Warn "ANTHROPIC_BASE_URL 已配置为: $currentBaseUrl"
+    Write-Host "  如需使用本地网关，请手动设置为 http://127.0.0.1:8765" -ForegroundColor Gray
+}
+
+# 验证安装
+Write-Host ""
+Write-Info "验证安装..."
+try {
+    $verifyResult = & $python -m lccg --version 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Success "lccg 安装验证通过: $verifyResult"
+    } else {
+        Write-Warn "lccg 命令验证失败，请检查 Python PATH"
+    }
+} catch {
+    Write-Warn "lccg 命令验证失败: $_"
 }
 
 Write-Host ""
 Write-Success "安装完成！"
 Write-Host ""
-Write-Host "  启动 Gateway:  lccg serve" -ForegroundColor Green
-Write-Host "  编辑配置:     $configFile" -ForegroundColor Green
+Write-Host "  推荐使用:" -ForegroundColor Green
+Write-Host "    lccg code              一键启动网关 + Claude Code"
 Write-Host ""
-Write-Host "  重要: 请编辑 $configFile 添加你的 Provider API Key" -ForegroundColor Yellow
+Write-Host "  手动管理:" -ForegroundColor Green
+Write-Host "    lccg serve             启动网关"
+Write-Host "    lccg status            查看网关状态"
+Write-Host "    lccg stop              停止后台网关"
+Write-Host ""
+Write-Host "  配置文件: $configFile" -ForegroundColor Green
+Write-Host "  重要: 请编辑配置文件添加你的 Provider API Key" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "  文档: https://github.com/whoknowszy/local-claude-code"
 Write-Host ""
