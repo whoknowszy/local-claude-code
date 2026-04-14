@@ -61,9 +61,22 @@ install_lccg() {
     fi
     info "最新版本: v${VERSION}"
 
+    # 检测平台
+    local PLATFORM
+    case "$(uname -s)-$(uname -m)" in
+        Linux-x86_64)  PLATFORM="linux-x64" ;;
+        Darwin-arm64)  PLATFORM="macos-arm64" ;;
+        Darwin-x86_64) PLATFORM="macos-arm64" ;;  # macOS x64 也使用 arm64 版本（Rosetta 兼容）
+        *)
+            error "不支持的平台: $(uname -s)-$(uname -m)"
+            info "请使用 pip install 手动安装: pip install git+https://github.com/whoknowszy/local-claude-code.git"
+            exit 1
+            ;;
+    esac
+
     # 下载 lccg.pyz
-    local DOWNLOAD_URL="https://github.com/whoknowszy/local-claude-code/releases/download/v${VERSION}/lccg.pyz"
-    info "下载 lccg v${VERSION}..."
+    local DOWNLOAD_URL="https://github.com/whoknowszy/local-claude-code/releases/download/v${VERSION}/lccg-${PLATFORM}.pyz"
+    info "下载 lccg v${VERSION} (${PLATFORM})..."
 
     mkdir -p "$INSTALL_DIR"
 

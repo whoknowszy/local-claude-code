@@ -6,13 +6,45 @@ on:
       - 'v*'
 
 jobs:
+  build-pyz:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            suffix: linux-x64
+            python: '3.12'
+          - os: macos-latest
+            suffix: macos-arm64
+            python: '3.12'
+    runs-on: ${{ matrix.os }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Build shiv package
+        run: |
+          pip install shiv
+          shiv -c lccg -o lccg-${{ matrix.suffix }}.pyz . --reproducible
+
+      - name: Upload pyz artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lccg-${{ matrix.suffix }}
+          path: lccg-${{ matrix.suffix }}.pyz
+
   release:
+    needs: [build-pyz]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
     steps:
       - uses: actions/checkout@v4
 
@@ -38,10 +70,11 @@ jobs:
           npm install
           npm run build
 
-      - name: Build shiv package
-        run: |
-          pip install shiv
-          shiv -c lccg -o lccg.pyz . --reproducible
+      - name: Download all pyz artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: pyz-artifacts/
+          merge-multiple: true
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -49,7 +82,7 @@ jobs:
           files: |
             dist/*.whl
             dist/*.tar.gz
-            lccg.pyz
+            pyz-artifacts/*.pyz
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
