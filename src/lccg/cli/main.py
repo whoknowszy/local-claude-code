@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
+import os
 import queue
+import signal
+import subprocess
+import sys
 import time as _time
 from pathlib import Path
 
 import click
-import importlib.metadata
 import httpx
 import structlog
 import uvicorn
@@ -22,6 +26,49 @@ from lccg.router.engine import RouterEngine
 from lccg.server.app import create_app
 
 console = Console()
+
+_PID_FILE = Path.home() / ".lccg" / "gateway.pid"
+
+
+def _is_gateway_running(host: str, port: int) -> bool:
+    """Check if gateway is already running by hitting /health."""
+    try:
+        resp = httpx.get(f"http://{host}:{port}/health", timeout=2)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+def _start_gateway_background(
+    config_path: str | None, host: str, port: int
+) -> subprocess.Popen:
+    """Start gateway as background subprocess."""
+    cmd = [sys.executable, "-m", "lccg", "serve"]
+    if config_path:
+        cmd += ["--config", str(config_path)]
+    cmd += ["--host", host, "--port", str(port)]
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+    _PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _PID_FILE.write_text(str(proc.pid))
+    return proc
+
+
+def _wait_gateway_ready(host: str, port: int, timeout: int = 15) -> bool:
+    """Poll /health until gateway is ready."""
+    import time
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _is_gateway_running(host, port):
+            return True
+        time.sleep(0.5)
+    return False
 
 
 def _setup_logging(level: str, log_dir: str | None = None, log_queue: queue.Queue | None = None) -> None:
@@ -428,3 +475,93 @@ def status(host: str, port: int) -> None:
                 f"in:{r['input_tokens']} out:{r['output_tokens']}"
                 + (f" ({r['error'][:50]})" if r.get("error") else "")
             )
+
+
+@cli.command()
+@click.option(
+    "-c", "--config", "config_path",
+    type=click.Path(exists=True),
+    default=None,
+    help="Path to config file.",
+)
+@click.option("--host", type=str, default=None, help="Gateway host.")
+@click.option("--port", type=int, default=None, help="Gateway port.")
+def code(config_path: str | None, host: str | None, port: int | None) -> None:
+    """Start gateway (if needed) and launch Claude Code with proxy env."""
+    from lccg.config.loader import load_config
+
+    # 1. 加载配置
+    cfg = load_config(config_path)
+    h = host or cfg.server.host
+    p = port or cfg.server.port
+
+    # 2. 检测网关
+    gateway_proc = None
+    we_started = False
+    if _is_gateway_running(h, p):
+        console.print(f"[green]Gateway already running on {h}:{p}[/green]")
+    else:
+        console.print(f"[yellow]Starting gateway on {h}:{p}...[/yellow]")
+        gateway_proc = _start_gateway_background(config_path, h, p)
+        if not _wait_gateway_ready(h, p):
+            console.print("[red]Gateway failed to start within 15s[/red]")
+            gateway_proc.terminate()
+            raise SystemExit(1)
+        we_started = True
+        console.print(f"[green]Gateway started (PID {gateway_proc.pid})[/green]")
+
+    # 3. 构建环境变量（一次性注入，不修改当前 shell）
+    env = os.environ.copy()
+    base_url = f"http://{h}:{p}"
+    env["ANTHROPIC_BASE_URL"] = base_url
+    if "ANTHROPIC_API_KEY" not in env:
+        env["ANTHROPIC_API_KEY"] = cfg.server.api_key or "sk-gateway-placeholder"
+
+    # 4. 启动 claude（前台阻塞）
+    console.print(
+        f"[green]Launching Claude Code "
+        f"(ANTHROPIC_BASE_URL={base_url})[/green]"
+    )
+    try:
+        subprocess.run(["claude"], env=env)
+    except FileNotFoundError:
+        console.print(
+            "[red]'claude' command not found. "
+            "Please install Claude Code first.[/red]"
+        )
+    except KeyboardInterrupt:
+        pass
+
+    # 5. 清理：如果是我们启动的网关，停止它
+    if we_started and gateway_proc is not None:
+        console.print("[yellow]Stopping gateway...[/yellow]")
+        gateway_proc.terminate()
+        try:
+            gateway_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            gateway_proc.kill()
+        _PID_FILE.unlink(missing_ok=True)
+        console.print("[green]Gateway stopped.[/green]")
+
+
+@cli.command()
+def stop() -> None:
+    """Stop a background gateway process."""
+    if not _PID_FILE.exists():
+        console.print("[yellow]No gateway PID file found.[/yellow]")
+        return
+    try:
+        pid = int(_PID_FILE.read_text().strip())
+    except (ValueError, OSError):
+        console.print("[red]Invalid PID file.[/red]")
+        _PID_FILE.unlink(missing_ok=True)
+        return
+    try:
+        os.kill(pid, signal.SIGTERM)
+        console.print(f"[green]Gateway (PID {pid}) stopped.[/green]")
+    except ProcessLookupError:
+        console.print(
+            f"[yellow]Gateway (PID {pid}) already stopped.[/yellow]"
+        )
+    _PID_FILE.unlink(missing_ok=True)
+
