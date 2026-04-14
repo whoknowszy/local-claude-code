@@ -74,6 +74,9 @@ def load_config(config_path: str | Path | None = None) -> GatewayConfig:
     # Resolve environment variables in string values
     resolved_data = _resolve_env_in_dict(raw_data)
 
+    # 移除 None 值，让 Pydantic 使用 default_factory 默认值
+    resolved_data = {k: v for k, v in resolved_data.items() if v is not None}
+
     return GatewayConfig(**resolved_data)
 
 

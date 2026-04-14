@@ -492,6 +492,16 @@ def code(config_path: str | None, host: str | None, port: int | None) -> None:
 
     # 1. 加载配置
     cfg = load_config(config_path)
+
+    # 检查 providers 是否为空，给出友好提示
+    if not cfg.providers:
+        click.echo(
+            click.style("⚠ 未配置任何 Provider", fg="yellow", bold=True)
+        )
+        click.echo(f"  请编辑配置文件添加 Provider: {config_path or '~/.lccg/config.yaml'}")
+        click.echo("  参考示例: https://github.com/whoknowszy/local-claude-code/blob/main/config.example.yaml")
+        click.echo()
+
     h = host or cfg.server.host
     p = port or cfg.server.port
 
