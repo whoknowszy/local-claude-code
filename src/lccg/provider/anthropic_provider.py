@@ -5,13 +5,14 @@ from __future__ import annotations
 import gzip
 import json
 import traceback
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 import structlog
 
 from lccg.config.schema import ProviderConfig
-from lccg.provider.base import BaseProvider
+from lccg.provider.base import BaseProvider, ProviderHTTPError
 
 logger = structlog.get_logger()
 
@@ -78,6 +79,13 @@ class AnthropicProvider(BaseProvider):
                 json=payload,
             )
             resp_raw = await response.aread()
+            # Check for HTTP errors and raise ProviderHTTPError for 4XX/5XX
+            if response.status_code >= 400:
+                raise ProviderHTTPError(
+                    status_code=response.status_code,
+                    body=resp_raw.decode("utf-8", errors="replace")[:500],
+                    headers=dict(response.headers),
+                )
         except httpx.TimeoutException as e:
             logger.error(
                 "anthropic_provider.timeout",
@@ -106,7 +114,6 @@ class AnthropicProvider(BaseProvider):
                 traceback=traceback.format_exc(),
             )
             raise
-        resp_headers = dict(response.headers)
         # Manual decompress: some providers (e.g. MiniMax) set content-encoding:gzip
         # but send plain body. Try gzip, fall back to plain text.
         try:
@@ -146,7 +153,14 @@ class AnthropicProvider(BaseProvider):
                 self._base_url,
                 json=payload,
             ) as response:
-                response.raise_for_status()
+                # Check for HTTP errors before starting to iterate
+                if response.status_code >= 400:
+                    body = await response.aread()
+                    raise ProviderHTTPError(
+                        status_code=response.status_code,
+                        body=body.decode("utf-8", errors="replace")[:500],
+                        headers=dict(response.headers),
+                    )
                 async for chunk in response.aiter_bytes():
                     if chunk:
                         yield chunk

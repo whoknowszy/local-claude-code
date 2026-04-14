@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import importlib.metadata
-import os
 import json
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import httpx
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from lccg.config.schema import GatewayConfig
 from lccg.log_config import setup_exception_logger
 from lccg.middleware.stats import StatsCollector
+from lccg.provider.base import ProviderHTTPError
 from lccg.provider.health import ProviderHealth
 from lccg.provider.registry import ProviderRegistry
 from lccg.router.engine import RouterEngine, RouteResult
@@ -90,6 +91,25 @@ def _client_ip(request: Request) -> str:
     )
 
 
+def _error_response(
+    status_code: int,
+    error_type: str,
+    message: str,
+    request_id: str,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    """Create Anthropic-compliant error response."""
+    return JSONResponse(
+        status_code=status_code,
+        headers=headers or {},
+        content={
+            "type": "error",
+            "error": {"type": error_type, "message": message},
+            "request_id": request_id,
+        },
+    )
+
+
 def create_app(
     config: GatewayConfig,
     registry: ProviderRegistry,
@@ -141,19 +161,18 @@ def create_app(
         if config.server.api_key:
             api_key = request.headers.get("x-api-key", "")
             if api_key != config.server.api_key:
-                return JSONResponse(
-                    status_code=401,
-                    content={"error": {"type": "authentication_error", "message": "Invalid API key"}},
-                )
+                logger.warning("gateway.auth_failed", request_id=request_id, client_ip=client_ip)
+                return _error_response(401, "authentication_error", "Invalid API key", request_id)
 
         # Parse request body
         try:
             body = await request.json()
-        except Exception:
-            return JSONResponse(
-                status_code=400,
-                content={"error": {"type": "invalid_request_error", "message": "Invalid JSON body"}},
+        except Exception as e:
+            logger.error(
+                "gateway.json_parse_error",
+                request_id=request_id, client_ip=client_ip, error=str(e),
             )
+            return _error_response(400, "invalid_request_error", "Invalid JSON body", request_id)
 
         # Full request body for debugging subagent detection
         try:
@@ -165,9 +184,15 @@ def create_app(
         # Extract all headers for subagent debugging
         headers_dict = dict(request.headers)
         # Mask sensitive headers
-        headers_to_log = {k: (v[:20] + "..." if len(v) > 20 else v) for k, v in headers_dict.items()}
+        headers_to_log = {
+            k: (v[:20] + "..." if len(v) > 20 else v)
+            for k, v in headers_dict.items()
+        }
         # Look for agent-related headers
-        agent_headers = {k: v for k, v in headers_dict.items() if "agent" in k.lower() or "subagent" in k.lower() or "x-claude" in k.lower()}
+        agent_headers = {
+            k: v for k, v in headers_dict.items()
+            if "agent" in k.lower() or "subagent" in k.lower() or "x-claude" in k.lower()
+        }
 
         # Log incoming request
         model = body.get("model", "")
@@ -197,10 +222,11 @@ def create_app(
         try:
             route = router.resolve(body)
         except ValueError as e:
-            return JSONResponse(
-                status_code=400,
-                content={"error": {"type": "invalid_request_error", "message": str(e)}},
+            logger.error(
+                "gateway.route_error",
+                request_id=request_id, model=body.get("model", "unknown"), error=str(e),
             )
+            return _error_response(400, "invalid_request_error", str(e), request_id)
 
         # [临时] subagent + claude-opus-4-6 硬路由到 mimo-v2-pro
         if is_subagent and model == "claude-opus-4-6":
@@ -254,20 +280,23 @@ def create_app(
                     original=route.provider_name,
                     fallback=fb_provider,
                 )
-                route = RouteResult(provider_name=fb_provider, model=fb_model, scenario=route.scenario)
+                route = RouteResult(
+                    provider_name=fb_provider, model=fb_model, scenario=route.scenario,
+                )
 
         # Get provider
         try:
             provider = registry.get_provider(route.provider_name)
         except KeyError:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "error": {
-                        "type": "invalid_request_error",
-                        "message": f"Provider not found: {route.provider_name}",
-                    }
-                },
+            logger.error(
+                "gateway.provider_not_found",
+                request_id=request_id, provider=route.provider_name,
+            )
+            return _error_response(
+                400,
+                "invalid_request_error",
+                f"Provider not found: {route.provider_name}",
+                request_id,
             )
 
         # Override model in request with the resolved model name
@@ -292,11 +321,11 @@ def create_app(
             )
 
     # Mount UI API routers
+    from lccg.server.api.claude_env import router as claude_env_router
     from lccg.server.api.config import router as config_router
+    from lccg.server.api.logs import router as logs_router
     from lccg.server.api.providers import router as providers_router
     from lccg.server.api.stats import router as stats_router
-    from lccg.server.api.logs import router as logs_router
-    from lccg.server.api.claude_env import router as claude_env_router
 
     app.include_router(config_router)
     app.include_router(providers_router)
@@ -334,7 +363,23 @@ async def _handle_non_streaming(
         response = await provider.send_request(payload, stream=False)
         response.raise_for_status()
         data = response.json()
-        result = transformer.transform_response(data)
+
+        # Transform response with separate exception handling
+        try:
+            result = transformer.transform_response(data)
+        except Exception as te:
+            logger.error(
+                "gateway.transform_error",
+                request_id=request_id,
+                provider=provider_name,
+                model=model,
+                error=str(te),
+                error_type=type(te).__name__,
+                raw_response_snippet=json.dumps(data, ensure_ascii=False)[:300] if data else "N/A",
+            )
+            # Transform error doesn't trigger fallback
+            return _error_response(502, "api_error", f"Response transform error: {te}", request_id)
+
         health_tracker.record_success(provider_name)
 
         # Extract usage from response
@@ -364,56 +409,93 @@ async def _handle_non_streaming(
 
         return JSONResponse(content=result, status_code=response.status_code)
     except Exception as e:
-        health_tracker.record_failure(provider_name)
         latency = round(timer.elapsed_ms, 1) if timer else 0
-        # Try to extract provider error detail from the exception
-        error_detail = str(e)
-        try:
-            if hasattr(e, "response") and e.response is not None:
-                resp = e.response
-                status = resp.status_code
-                try:
-                    resp_body = resp.json()
-                    error_detail = f"status={status} body={json.dumps(resp_body, ensure_ascii=False)[:300]}"
-                except Exception:
-                    try:
-                        body_text = resp.text
-                        error_detail = f"status={status} body={body_text[:200]}"
-                    except Exception:
-                        error_detail = f"status={status} body=(unread)"
-            elif hasattr(e, "request") and hasattr(e, "message"):
-                error_detail = e.message[:200]
-        except Exception:
-            pass
+
+        # Determine error classification and whether to fallback
+        should_fallback = False
+        should_record_health_failure = True
+        status_code = 502
+        error_type = "api_error"
+        error_message = str(e)
+        response_headers: dict[str, str] | None = None
+
+        if isinstance(e, ProviderHTTPError):
+            if e.status_code == 429:
+                # Rate limit - don't fallback, but record health failure
+                status_code = 429
+                error_type = "rate_limit_error"
+                error_message = e.body[:500] if e.body else "Rate limit exceeded"
+                retry_after = e.headers.get("retry-after", "60")
+                response_headers = {"retry-after": retry_after}
+                should_fallback = False
+                should_record_health_failure = True
+            elif 400 <= e.status_code < 500:
+                # Client error - don't fallback, don't record health failure
+                status_code = e.status_code
+                if e.status_code == 401:
+                    error_type = "authentication_error"
+                elif e.status_code == 403:
+                    error_type = "permission_error"
+                else:
+                    error_type = "invalid_request_error"
+                error_message = e.body[:500] if e.body else f"Client error {e.status_code}"
+                should_fallback = False
+                should_record_health_failure = False
+            else:
+                # 5XX - fallback and record health failure
+                status_code = 502
+                error_type = "api_error"
+                error_message = f"Provider error: {e}"
+                should_fallback = True
+                should_record_health_failure = True
+        elif isinstance(e, httpx.TimeoutException):
+            # Timeout - fallback and record health failure
+            status_code = 504
+            error_type = "timeout_error"
+            error_message = "Provider request timeout"
+            should_fallback = True
+            should_record_health_failure = True
+        else:
+            # Other exceptions (connection errors, etc.) - fallback
+            status_code = 502
+            error_type = "api_error"
+            error_message = f"Provider error: {e}"
+            should_fallback = True
+            should_record_health_failure = True
+
+        # Record health failure if needed
+        if should_record_health_failure:
+            health_tracker.record_failure(provider_name)
+
+        # Log the error
         logger.error(
             "gateway.error",
             request_id=request_id,
             client_ip=client_ip,
             provider=provider_name,
             model=model,
-            error=error_detail,
+            error=error_message,
             error_type=type(e).__name__,
+            status_code=status_code,
             latency_ms=latency,
         )
 
         if timer:
-            timer.finish(provider=provider_name, model=model, status="error", error=str(e), scenario=scenario)
+            timer.finish(
+                provider=provider_name, model=model, status="error",
+                error=str(e), scenario=scenario,
+            )
 
-        # Try fallback on any error (but skip if fallback routes to the same provider)
+        # Try fallback only for 5XX/timeout/connection errors
         if (
-            config and router and registry and body
+            should_fallback
+            and config and router and registry and body
             and config.router.fallback
         ):
             fb_provider_name, fb_model = RouterEngine._parse_route(config.router.fallback)
             if fb_provider_name == provider_name:
-                return JSONResponse(
-                    status_code=502,
-                    content={
-                        "error": {
-                            "type": "api_error",
-                            "message": f"Provider error: {e}",
-                        }
-                    },
+                return _error_response(
+                    status_code, error_type, error_message, request_id, response_headers,
                 )
             logger.warning(
                 "gateway.fallback",
@@ -465,9 +547,11 @@ async def _handle_non_streaming(
                 if hasattr(fb_error, "response") and fb_error.response is not None:
                     try:
                         detail = fb_error.response.json()
-                        fb_error_detail = f"status={fb_error.response.status_code} body={json.dumps(detail, ensure_ascii=False)[:300]}"
+                        body_str = json.dumps(detail, ensure_ascii=False)[:300]
+                        fb_error_detail = f"status={fb_error.response.status_code} body={body_str}"
                     except Exception:
-                        fb_error_detail = f"status={fb_error.response.status_code} body={fb_error.response.text[:200]}"
+                        body_text = fb_error.response.text[:200]
+                        fb_error_detail = f"status={fb_error.response.status_code} body={body_text}"
                 logger.error(
                     "gateway.error",
                     request_id=request_id,
@@ -479,15 +563,7 @@ async def _handle_non_streaming(
                     fallback_failed=True,
                 )
 
-        return JSONResponse(
-            status_code=502,
-            content={
-                "error": {
-                    "type": "api_error",
-                    "message": f"Provider error: {e}",
-                }
-            },
-        )
+        return _error_response(status_code, error_type, error_message, request_id, response_headers)
 
 
 async def _handle_streaming(
@@ -557,24 +633,75 @@ async def _handle_streaming(
                     latency_ms=latency,
                 )
         except Exception as e:
-            health_tracker.record_failure(provider_name)
             latency = round(timer.elapsed_ms, 1) if timer else 0
+
+            # Determine error classification and whether to fallback
+            should_fallback = False
+            should_record_health_failure = True
+            error_type = "api_error"
+            error_message = str(e)
+
+            if isinstance(e, ProviderHTTPError):
+                if e.status_code == 429:
+                    # Rate limit - don't fallback, but record health failure
+                    error_type = "rate_limit_error"
+                    error_message = e.body[:500] if e.body else "Rate limit exceeded"
+                    should_fallback = False
+                    should_record_health_failure = True
+                elif 400 <= e.status_code < 500:
+                    # Client error - don't fallback, don't record health failure
+                    if e.status_code == 401:
+                        error_type = "authentication_error"
+                    elif e.status_code == 403:
+                        error_type = "permission_error"
+                    else:
+                        error_type = "invalid_request_error"
+                    error_message = e.body[:500] if e.body else f"Client error {e.status_code}"
+                    should_fallback = False
+                    should_record_health_failure = False
+                else:
+                    # 5XX - fallback and record health failure
+                    error_type = "api_error"
+                    error_message = f"Provider error: {e}"
+                    should_fallback = True
+                    should_record_health_failure = True
+            elif isinstance(e, httpx.TimeoutException):
+                # Timeout - fallback and record health failure
+                error_type = "timeout_error"
+                error_message = "Provider request timeout"
+                should_fallback = True
+                should_record_health_failure = True
+            else:
+                # Other exceptions (connection errors, etc.) - fallback
+                error_type = "api_error"
+                error_message = f"Provider error: {e}"
+                should_fallback = True
+                should_record_health_failure = True
+
+            # Record health failure if needed
+            if should_record_health_failure:
+                health_tracker.record_failure(provider_name)
+
             logger.error(
                 "gateway.stream_error",
                 request_id=request_id,
                 client_ip=client_ip,
                 provider=provider_name,
                 model=model,
-                error=str(e),
+                error=error_message,
                 error_type=type(e).__name__,
                 latency_ms=latency,
             )
             if timer:
-                timer.finish(provider=provider_name, model=model, status="error", error=str(e), scenario=scenario)
+                timer.finish(
+                    provider=provider_name, model=model, status="error",
+                    error=str(e), scenario=scenario,
+                )
 
-            # Try fallback if available (mirrors _handle_non_streaming fallback)
+            # Try fallback only for 5XX/timeout/connection errors (not 4XX)
             if (
-                config and router and registry and body
+                should_fallback
+                and config and router and registry and body
                 and config.router.fallback
             ):
                 fb_provider_name, fb_model = RouterEngine._parse_route(config.router.fallback)
@@ -637,13 +764,16 @@ async def _handle_streaming(
                             fallback_failed=True,
                         )
                         if timer:
-                            timer.finish(provider=fb_provider_name, model=fb_model, status="error", error=str(fb_error), scenario=scenario)
+                            timer.finish(
+                                provider=fb_provider_name, model=fb_model, status="error",
+                                error=str(fb_error), scenario=scenario,
+                            )
 
             error_event = {
                 "type": "error",
                 "error": {
-                    "type": "api_error",
-                    "message": f"Provider error: {e}",
+                    "type": error_type,
+                    "message": error_message,
                 },
             }
             yield f"event: error\ndata: {json.dumps(error_event)}\n\n".encode()

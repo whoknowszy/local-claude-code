@@ -3,11 +3,22 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 
 from lccg.config.schema import ProviderConfig
+
+
+class ProviderHTTPError(Exception):
+    """Raised when upstream provider returns an HTTP error."""
+
+    def __init__(self, status_code: int, body: str, headers: dict | None = None):
+        self.status_code = status_code
+        self.body = body
+        self.headers = headers or {}
+        super().__init__(f"Provider returned HTTP {status_code}: {body[:200]}")
 
 
 class BaseProvider(ABC):

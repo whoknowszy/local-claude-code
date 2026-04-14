@@ -1,5 +1,7 @@
 """Tests for the Anthropic ↔ OpenAI conversion transformer."""
 
+from __future__ import annotations
+
 import json
 
 import pytest
