@@ -1,0 +1,18 @@
+{
+  "latest": "0.4.1",
+  "versions": {
+    "0.4.1": {
+      "url": "https://github.com/whoknowszy/local-claude-code/releases/download/v0.4.1",
+      "pyz_files": {
+        "linux-x64": "lccg-linux-x64.pyz",
+        "linux-arm64": "lccg-linux-arm64.pyz",
+        "macos-x64": "lccg-macos-x64.pyz",
+        "macos-arm64": "lccg-macos-arm64.pyz",
+        "windows-x64": "lccg-windows-x64.pyz",
+        "windows-arm64": "lccg-windows-arm64.pyz"
+      },
+      "changelog": "Fixed content extraction in streaming responses",
+      "release_date": "2024-04-15"
+    }
+  }
+}
