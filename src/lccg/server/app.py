@@ -832,6 +832,14 @@ def _extract_streaming_usage(chunk: bytes, usage_info: dict[str, int]) -> str | 
                 usage_info["output_tokens"] = u.get("completion_tokens", u.get("output_tokens", 0))
                 if "choices" in data:
                     cr = data["choices"][0].get("finish_reason")
+                    # Extract content from OpenAI format choices
+                    content = data["choices"][0].get("delta", {}).get("content", "")
+                    if not content:
+                        # Try alternative location for content
+                        content = data["choices"][0].get("message", {}).get("content", "")
+                    if content:
+                        # Return content so caller can use it
+                        return content
                     if cr:
                         reason = cr
 
