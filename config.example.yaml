@@ -11,6 +11,7 @@ logging:
 providers:
   - name: minimax
     type: anthropic
+    priority: 1          # Lower number = higher priority (used for fallback chain)
     base_url: "https://api.minimaxi.com/anthropic/v1/messages"
     api_key: "${MINIMAX_API_KEY}"
     auth_scheme: "bearer"
@@ -19,24 +20,22 @@ providers:
 
   - name: openai
     type: openai
+    priority: 2
     base_url: "https://api.openai.com/v1/chat/completions"
     api_key: "${OPENAI_API_KEY}"
     models:
       - "gpt-4o"
       - "gpt-4o-mini"
 
-  # - name: openrouter
-  #   type: openai
-  #   base_url: "https://openrouter.ai/api/v1/chat/completions"
-  #   api_key: "${OPENROUTER_API_KEY}"
-  #   models:
-  #     - "anthropic/claude-sonnet-4-5"
-  #     - "deepseek/deepseek-r1"
-
 router:
+  # 模型别名映射: maps incoming model name to provider,model
+  # 单路由: "model-alias": "provider,model"
+  # 回退链: "model-alias": ["p1,m1", "p2,m2"]
+  model_map:
+    # "claude-sonnet-4-6": "openrouter,anthropic/claude-sonnet-4-5"
+
+  # 默认路由（当无其他规则匹配时使用）
   default: "minimax,MiniMax-M2.7"
-  # background: "openai,gpt-4o-mini"
-  # think: "openrouter,deepseek/deepseek-r1"
-  # long_context: "openai,gpt-4o"
-  # long_context_threshold: 60000
+
+  # 故障回退路由（全局 fallback，优先级最低）
   # fallback: "minimax,MiniMax-M2.7"
