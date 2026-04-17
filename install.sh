@@ -49,27 +49,10 @@ detect_python() {
 }
 
 install_lccg() {
-    # 检测/安装 uv
-    if ! command -v uv &>/dev/null; then
-        info "uv 未安装，正在安装..."
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        export PATH="$HOME/.cargo/bin:$PATH"
-    fi
-    success "uv: $(uv --version)"
-
     # 判断本地源码目录是否可用（curl 管道执行时 $0 不是真实路径）
     local SRC_DIR
     SRC_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)" || SRC_DIR=""
-    if [[ -n "$SRC_DIR" && -f "$SRC_DIR/pyproject.toml" ]]; then
-        info "从本地源码安装 lccg: $SRC_DIR"
-        if ! uv pip install -e "$SRC_DIR"; then
-            error "uv 安装失败，尝试使用 pip..."
-            $PYTHON_CMD -m pip install -e "$SRC_DIR" || {
-                error "pip 安装也失败，请手动运行: uv pip install -e ."
-                exit 1
-            }
-        fi
-    else
+    if [[ -z "$SRC_DIR" || ! -f "$SRC_DIR/pyproject.toml" ]]; then
         # 远程执行：clone 仓库后本地安装
         local CLONE_DIR="$HOME/.lccg/source"
         info "远程执行模式，克隆仓库到 $CLONE_DIR ..."
@@ -79,15 +62,14 @@ install_lccg() {
         else
             git clone https://github.com/whoknowszy/local-claude-code.git "$CLONE_DIR"
         fi
-        info "从本地源码安装 lccg: $CLONE_DIR"
-        if ! uv pip install -e "$CLONE_DIR"; then
-            error "uv 安装失败，尝试使用 pip..."
-            $PYTHON_CMD -m pip install -e "$CLONE_DIR" || {
-                error "pip 安装也失败，请手动运行: uv pip install -e ."
-                exit 1
-            }
-        fi
+        SRC_DIR="$CLONE_DIR"
     fi
+
+    info "从本地源码安装 lccg: $SRC_DIR"
+    $PYTHON_CMD -m pip install -e "$SRC_DIR" || {
+        error "pip 安装失败，请手动运行: pip install -e ."
+        exit 1
+    }
 
     # 提取版本号用于显示
     local VERSION
