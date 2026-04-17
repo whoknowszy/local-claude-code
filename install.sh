@@ -49,58 +49,50 @@ detect_python() {
 }
 
 install_lccg() {
-    local INSTALL_DIR="$HOME/.local/bin"
-    local INSTALL_PATH="$INSTALL_DIR/lccg"
-
-    # 提取版本号
-    local VERSION
-    VERSION=$(curl -sL "https://raw.githubusercontent.com/whoknowszy/local-claude-code/main/pyproject.toml" | grep '^version' | head -1 | sed 's/.*"\(.*\)".*/\1/')
-    if [[ -z "$VERSION" ]]; then
-        error "无法获取版本号"
-        exit 1
+    # 检测/安装 uv
+    if ! command -v uv &>/dev/null; then
+        info "uv 未安装，正在安装..."
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        export PATH="$HOME/.cargo/bin:$PATH"
     fi
-    info "最新版本: v${VERSION}"
+    success "uv: $(uv --version)"
 
-    # 检测平台
-    local PLATFORM
-    case "$(uname -s)-$(uname -m)" in
-        Linux-x86_64)  PLATFORM="linux-x64" ;;
-        Darwin-arm64)  PLATFORM="macos-arm64" ;;
-        Darwin-x86_64) PLATFORM="macos-arm64" ;;  # macOS x64 也使用 arm64 版本（Rosetta 兼容）
-        *)
-            error "不支持的平台: $(uname -s)-$(uname -m)"
-            info "请使用 pip install 手动安装: pip install git+https://github.com/whoknowszy/local-claude-code.git"
-            exit 1
-            ;;
-    esac
-
-    # 下载 lccg.pyz
-    local DOWNLOAD_URL="https://github.com/whoknowszy/local-claude-code/releases/download/v${VERSION}/lccg-${PLATFORM}.pyz"
-    info "下载 lccg v${VERSION} (${PLATFORM})..."
-
-    mkdir -p "$INSTALL_DIR"
-
-    if command -v curl &>/dev/null; then
-        if ! curl -fSL "$DOWNLOAD_URL" -o "$INSTALL_PATH"; then
-            error "下载失败: $DOWNLOAD_URL"
-            info "排查建议:"
-            info "  1. 确保网络可以访问 GitHub"
-            info "  2. 尝试使用代理: export https_proxy=http://your-proxy:port"
-            info "  3. 手动下载: $DOWNLOAD_URL"
-            exit 1
-        fi
-    elif command -v wget &>/dev/null; then
-        if ! wget -q "$DOWNLOAD_URL" -O "$INSTALL_PATH"; then
-            error "下载失败: $DOWNLOAD_URL"
-            exit 1
+    # 判断本地源码目录是否可用（curl 管道执行时 $0 不是真实路径）
+    local SRC_DIR
+    SRC_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)" || SRC_DIR=""
+    if [[ -n "$SRC_DIR" && -f "$SRC_DIR/pyproject.toml" ]]; then
+        info "从本地源码安装 lccg: $SRC_DIR"
+        if ! uv pip install -e "$SRC_DIR"; then
+            error "uv 安装失败，尝试使用 pip..."
+            $PYTHON_CMD -m pip install -e "$SRC_DIR" || {
+                error "pip 安装也失败，请手动运行: uv pip install -e ."
+                exit 1
+            }
         fi
     else
-        error "需要 curl 或 wget"
-        exit 1
+        # 远程执行：clone 仓库后本地安装
+        local CLONE_DIR="$HOME/.lccg/source"
+        info "远程执行模式，克隆仓库到 $CLONE_DIR ..."
+        if [[ -d "$CLONE_DIR" ]]; then
+            info "仓库已存在，拉取最新..."
+            git -C "$CLONE_DIR" pull || warn "git pull 失败，使用现有代码继续"
+        else
+            git clone https://github.com/whoknowszy/local-claude-code.git "$CLONE_DIR"
+        fi
+        info "从本地源码安装 lccg: $CLONE_DIR"
+        if ! uv pip install -e "$CLONE_DIR"; then
+            error "uv 安装失败，尝试使用 pip..."
+            $PYTHON_CMD -m pip install -e "$CLONE_DIR" || {
+                error "pip 安装也失败，请手动运行: uv pip install -e ."
+                exit 1
+            }
+        fi
     fi
 
-    chmod +x "$INSTALL_PATH"
-    success "lccg v${VERSION} 安装完成 → $INSTALL_PATH"
+    # 提取版本号用于显示
+    local VERSION
+    VERSION=$($PYTHON_CMD -c "import importlib.metadata; print(importlib.metadata.version('lccg'))" 2>/dev/null || echo "0.4.0")
+    success "lccg v${VERSION} 安装完成"
 }
 
 create_config() {
@@ -224,12 +216,8 @@ EOF
 }
 
 print_banner() {
-    INSTALL_VERSION="v0.3.0"
-    if command -v curl &>/dev/null; then
-        INSTALL_VERSION=$(curl -sL --max-time 5 \
-            https://raw.githubusercontent.com/whoknowszy/local-claude-code/main/pyproject.toml 2>/dev/null | \
-            python3 -c "import re,sys; m=re.search(r'^version\s*=\s*\"([^\"]+)\"', sys.stdin.read(), re.M); print('v'+m.group(1) if m else 'v0.3.0')" 2>/dev/null) || true
-    fi
+    INSTALL_VERSION="v0.4.0"
+    INSTALL_VERSION=$(lccg --version 2>/dev/null | sed 's/.*v\?/v/' || echo "v0.4.0")
     echo ""
     echo -e "${CYAN}  _   _                       _   _             "
     echo -e " | \\ | | _____      _____ _ __| | | | ___  _   _ "
