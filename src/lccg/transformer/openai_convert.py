@@ -365,8 +365,9 @@ class _StreamState:
     def process_chunk(self, data: dict[str, Any]) -> list[bytes]:
         """Process an OpenAI SSE chunk and yield Anthropic SSE events."""
         events: list[bytes] = []
-        choice = data.get("choices", [{}])[0] if data.get("choices") else {}
-        delta = choice.get("delta", {})
+        choices = data.get("choices") or []
+        choice = choices[0] if choices and choices[0] else {}
+        delta = choice.get("delta") or {}
 
         # Update model
         if data.get("model"):
@@ -453,7 +454,7 @@ class _StreamState:
             return events
 
         # Tool calls
-        tool_calls = delta.get("tool_calls", [])
+        tool_calls = (delta.get("tool_calls") or []) if delta else []
         for tc in tool_calls:
             tc_index = tc.get("index", 0)
             func = tc.get("function", {})

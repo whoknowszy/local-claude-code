@@ -228,17 +228,6 @@ def create_app(
             )
             return _error_response(400, "invalid_request_error", str(e), request_id)
 
-        # [临时] subagent + claude-opus-4-6 硬路由到 mimo-v2-pro
-        if is_subagent and model == "claude-opus-4-6":
-            route = RouteResult(provider_name="xiaomi", model="mimo-v2-pro", scenario=None)
-            logger.info(
-                "gateway.subagent_hard_override",
-                request_id=request_id,
-                original_model=model,
-                override_model="mimo-v2-pro",
-                provider="xiaomi",
-            )
-
         # Log route resolution for subagent debugging
         logger.info(
             "gateway.route_resolved",
@@ -254,7 +243,6 @@ def create_app(
         from lccg.server.api.claude_env import _load as load_claude_env
         claude_env = load_claude_env()
         env_model = claude_env.get("model", "").strip()
-        stats_model = route.model
         if env_model:
             if env_model != route.model:
                 logger.info(
@@ -283,6 +271,9 @@ def create_app(
                 route = RouteResult(
                     provider_name=fb_provider, model=fb_model, scenario=route.scenario,
                 )
+
+        # stats_model must be set after all route modifications are complete
+        stats_model = route.model
 
         # Get provider
         try:
@@ -486,82 +477,78 @@ async def _handle_non_streaming(
                 error=str(e), scenario=scenario,
             )
 
-        # Try fallback only for 5XX/timeout/connection errors
-        if (
-            should_fallback
-            and config and router and registry and body
-            and config.router.fallback
-        ):
-            fb_provider_name, fb_model = RouterEngine._parse_route(config.router.fallback)
-            if fb_provider_name == provider_name:
-                return _error_response(
-                    status_code, error_type, error_message, request_id, response_headers,
+        # Try fallback chain for 5XX/timeout/connection errors
+        if should_fallback and config and router and registry and body:
+            fallback_chain = router.resolve_fallback_chain(model=model, failed_provider=provider_name)
+            for fb_route in fallback_chain:
+                logger.warning(
+                    "gateway.fallback",
+                    request_id=request_id,
+                    from_provider=provider_name,
+                    to_provider=fb_route.provider_name,
+                    to_model=fb_route.model,
+                    scenario=fb_route.scenario,
+                    error=str(e),
                 )
-            logger.warning(
-                "gateway.fallback",
-                request_id=request_id,
-                from_provider=provider_name,
-                to_provider=fb_provider_name,
-                error=str(e),
-            )
-            try:
-                fb_provider = registry.get_provider(fb_provider_name)
-                fb_transformer = registry.get_transformer_for_provider(fb_provider_name)
-                fb_body = {**body, "model": fb_model}
-                fb_payload = fb_transformer.transform_request(fb_body)
-                fb_timer = stats.start_timer() if stats else None
-                response = await fb_provider.send_request(fb_payload, stream=False)
-                response.raise_for_status()
-                data = response.json()
-                result = fb_transformer.transform_response(data)
-                health_tracker.record_success(fb_provider_name)
+                try:
+                    fb_provider = registry.get_provider(fb_route.provider_name)
+                    fb_transformer = registry.get_transformer_for_provider(fb_route.provider_name)
+                    fb_body = {**body, "model": fb_route.model}
+                    fb_payload = fb_transformer.transform_request(fb_body)
+                    fb_timer = stats.start_timer() if stats else None
+                    response = await fb_provider.send_request(fb_payload, stream=False)
+                    response.raise_for_status()
+                    data = response.json()
+                    result = fb_transformer.transform_response(data)
+                    health_tracker.record_success(fb_route.provider_name)
 
-                usage = result.get("usage", {})
-                fb_latency = round(fb_timer.elapsed_ms, 1) if fb_timer else 0
-                if fb_timer:
-                    fb_timer.finish(
-                        provider=fb_provider_name, model=fb_model, status="success",
+                    usage = result.get("usage", {})
+                    fb_latency = round(fb_timer.elapsed_ms, 1) if fb_timer else 0
+                    if fb_timer:
+                        fb_timer.finish(
+                            provider=fb_route.provider_name, model=fb_route.model, status="success",
+                            input_tokens=usage.get("input_tokens", 0),
+                            output_tokens=usage.get("output_tokens", 0),
+                            scenario=scenario,
+                        )
+
+                    logger.info(
+                        "gateway.response",
+                        request_id=request_id,
+                        client_ip=client_ip,
+                        provider=fb_route.provider_name,
+                        model=fb_route.model,
+                        scenario=scenario or None,
+                        status=response.status_code,
                         input_tokens=usage.get("input_tokens", 0),
                         output_tokens=usage.get("output_tokens", 0),
-                        scenario=scenario,
+                        latency_ms=fb_latency,
+                        via_fallback=True,
                     )
-
-                logger.info(
-                    "gateway.response",
-                    request_id=request_id,
-                    client_ip=client_ip,
-                    provider=fb_provider_name,
-                    model=fb_model,
-                    scenario=scenario or None,
-                    status=response.status_code,
-                    input_tokens=usage.get("input_tokens", 0),
-                    output_tokens=usage.get("output_tokens", 0),
-                    latency_ms=fb_latency,
-                    via_fallback=True,
-                )
-                return JSONResponse(content=result, status_code=response.status_code)
-            except Exception as fb_error:
-                health_tracker.record_failure(fb_provider_name)
-                fb_latency = round(fb_timer.elapsed_ms, 1) if fb_timer else 0
-                fb_error_detail = str(fb_error)
-                if hasattr(fb_error, "response") and fb_error.response is not None:
-                    try:
-                        detail = fb_error.response.json()
-                        body_str = json.dumps(detail, ensure_ascii=False)[:300]
-                        fb_error_detail = f"status={fb_error.response.status_code} body={body_str}"
-                    except Exception:
-                        body_text = fb_error.response.text[:200]
-                        fb_error_detail = f"status={fb_error.response.status_code} body={body_text}"
-                logger.error(
-                    "gateway.error",
-                    request_id=request_id,
-                    client_ip=client_ip,
-                    provider=fb_provider_name,
-                    model=fb_model,
-                    error=fb_error_detail,
-                    latency_ms=fb_latency,
-                    fallback_failed=True,
-                )
+                    return JSONResponse(content=result, status_code=response.status_code)
+                except Exception as fb_error:
+                    health_tracker.record_failure(fb_route.provider_name)
+                    fb_latency = round(fb_timer.elapsed_ms, 1) if fb_timer else 0
+                    fb_error_detail = str(fb_error)
+                    fb_resp = getattr(fb_error, "response", None)
+                    if fb_resp is not None:
+                        try:
+                            detail = fb_resp.json()
+                            body_str = json.dumps(detail, ensure_ascii=False)[:300]
+                            fb_error_detail = f"status={fb_resp.status_code} body={body_str}"
+                        except Exception:
+                            body_text = fb_resp.text[:200]
+                            fb_error_detail = f"status={fb_resp.status_code} body={body_text}"
+                    logger.error(
+                        "gateway.error",
+                        request_id=request_id,
+                        client_ip=client_ip,
+                        provider=fb_route.provider_name,
+                        model=fb_route.model,
+                        error=fb_error_detail,
+                        latency_ms=fb_latency,
+                        fallback_failed=True,
+                    )
 
         return _error_response(status_code, error_type, error_message, request_id, response_headers)
 
@@ -698,25 +685,23 @@ async def _handle_streaming(
                     error=str(e), scenario=scenario,
                 )
 
-            # Try fallback only for 5XX/timeout/connection errors (not 4XX)
-            if (
-                should_fallback
-                and config and router and registry and body
-                and config.router.fallback
-            ):
-                fb_provider_name, fb_model = RouterEngine._parse_route(config.router.fallback)
-                if fb_provider_name != provider_name:
+            # Try fallback chain for 5XX/timeout/connection errors (not 4XX)
+            if should_fallback and config and router and registry and body:
+                fallback_chain = router.resolve_fallback_chain(model=model, failed_provider=provider_name)
+                for fb_route in fallback_chain:
                     logger.warning(
                         "gateway.stream_fallback",
                         request_id=request_id,
                         from_provider=provider_name,
-                        to_provider=fb_provider_name,
+                        to_provider=fb_route.provider_name,
+                        to_model=fb_route.model,
+                        scenario=fb_route.scenario,
                         error=str(e),
                     )
                     try:
-                        fb_provider = registry.get_provider(fb_provider_name)
-                        fb_transformer = registry.get_transformer_for_provider(fb_provider_name)
-                        fb_body = {**body, "model": fb_model}
+                        fb_provider = registry.get_provider(fb_route.provider_name)
+                        fb_transformer = registry.get_transformer_for_provider(fb_route.provider_name)
+                        fb_body = {**body, "model": fb_route.model}
                         fb_payload = fb_transformer.transform_request(fb_body)
                         fb_stream = fb_provider.stream_response(fb_payload)
                         async for chunk in fb_transformer.transform_stream(fb_stream):
@@ -726,11 +711,11 @@ async def _handle_streaming(
                             if reason:
                                 finish_reason = reason
                             yield chunk
-                        health_tracker.record_success(fb_provider_name)
+                        health_tracker.record_success(fb_route.provider_name)
                         fb_latency = round(timer.elapsed_ms, 1) if timer else 0
                         if timer:
                             timer.finish(
-                                provider=fb_provider_name, model=fb_model, status="success",
+                                provider=fb_route.provider_name, model=fb_route.model, status="success",
                                 input_tokens=usage_info["input_tokens"],
                                 output_tokens=usage_info["output_tokens"],
                                 scenario=scenario,
@@ -739,8 +724,8 @@ async def _handle_streaming(
                             "gateway.stream_done",
                             request_id=request_id,
                             client_ip=client_ip,
-                            provider=fb_provider_name,
-                            model=fb_model,
+                            provider=fb_route.provider_name,
+                            model=fb_route.model,
                             scenario=scenario or None,
                             finish_reason=finish_reason,
                             input_tokens=usage_info["input_tokens"],
@@ -750,14 +735,14 @@ async def _handle_streaming(
                         )
                         return  # fallback succeeded, stop generator
                     except Exception as fb_error:
-                        health_tracker.record_failure(fb_provider_name)
+                        health_tracker.record_failure(fb_route.provider_name)
                         fb_latency = round(timer.elapsed_ms, 1) if timer else 0
                         logger.error(
                             "gateway.stream_error",
                             request_id=request_id,
                             client_ip=client_ip,
-                            provider=fb_provider_name,
-                            model=fb_model,
+                            provider=fb_route.provider_name,
+                            model=fb_route.model,
                             error=str(fb_error),
                             error_type=type(fb_error).__name__,
                             latency_ms=fb_latency,
@@ -765,7 +750,7 @@ async def _handle_streaming(
                         )
                         if timer:
                             timer.finish(
-                                provider=fb_provider_name, model=fb_model, status="error",
+                                provider=fb_route.provider_name, model=fb_route.model, status="error",
                                 error=str(fb_error), scenario=scenario,
                             )
 

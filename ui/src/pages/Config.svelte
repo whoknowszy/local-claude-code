@@ -12,28 +12,155 @@
   let claudeEnvError = $state('')
   let claudeEnvEditing = $state(false)
 
-  // Provider modal state
+  // model_map structured entries
+  let modelMapEntries = $state([])
+
+  function addModelMapEntry() {
+    modelMapEntries = [...modelMapEntries, {
+      alias: '',
+      mode: 'single',
+      routes: [{ provider: providerList[0]?.name || '', model: providerList[0]?.models?.[0] || '' }],
+    }]
+  }
+
+  function removeModelMapEntry(idx) {
+    modelMapEntries = modelMapEntries.filter((_, i) => i !== idx)
+  }
+
+  function addModelMapRoute(idx) {
+    const entries = [...modelMapEntries]
+    entries[idx].routes = [...entries[idx].routes, { provider: '', model: '' }]
+    modelMapEntries = entries
+  }
+
+  function removeModelMapRoute(entryIdx, routeIdx) {
+    const entries = [...modelMapEntries]
+    entries[entryIdx].routes = entries[entryIdx].routes.filter((_, i) => i !== routeIdx)
+    modelMapEntries = entries
+  }
+
+// Provider modal state
   let showModal = $state(false)
   let editingIdx = $state(-1)
   let form = $state({
     name: '', type: 'anthropic', base_url: '', api_key: '',
-    auth_scheme: 'x-api-key', models_text: '', timeout: 600,
+    auth_scheme: 'x-api-key', models: [], timeout: 600, priority: 100,
+    enabled: true,
   })
 
-  let routeOptions = $derived.by(() => {
-    if (!config?.providers) return []
-    const opts = []
-    for (const p of config.providers) {
-      for (const m of (p.models || [])) {
-        opts.push(`${p.name},${m}`)
+  // 模型标签输入（modal 内）
+  let formModelInput = $state('')
+
+  function addModel() {
+    const m = formModelInput.trim()
+    if (!m || form.models.includes(m)) { formModelInput = ''; return }
+    form.models = [...form.models, m]
+    formModelInput = ''
+  }
+
+  // Provider list for selects (enabled providers only)
+  let providerList = $derived.by(() => {
+    return (config?.providers || []).filter(p => p.enabled !== false).map(p => ({ name: p.name, models: p.models || [] }))
+  })
+
+  // Sorted providers for table display (by priority, then name)
+  let sortedProviders = $derived.by(() => {
+    return [...(config?.providers || [])].sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100) || a.name.localeCompare(b.name))
+  })
+
+  // Route split state: default
+  let defaultProvider = $state('')
+  let defaultModel = $state('')
+  let defaultModelOptions = $derived.by(() => {
+    if (!defaultProvider) return []
+    const p = providerList.find(p => p.name === defaultProvider)
+    return p ? p.models : []
+  })
+
+  // Route split state: fallback
+  let fallbackProvider = $state('')
+  let fallbackModel = $state('')
+  let fallbackModelOptions = $derived.by(() => {
+    if (!fallbackProvider) return []
+    const p = providerList.find(p => p.name === fallbackProvider)
+    return p ? p.models : []
+  })
+
+  // Guard: prevents sync $effects from overwriting config during initial load()
+  let routeInitialized = $state(false)
+
+  // Sync default route to config on change (only after load() has parsed initial values)
+  $effect(() => {
+    if (!config || !routeInitialized) return
+    config.router.default = (defaultProvider && defaultModel) ? `${defaultProvider},${defaultModel}` : ''
+  })
+
+  // Sync fallback route to config on change
+  $effect(() => {
+    if (!config || !routeInitialized) return
+    config.router.fallback = (fallbackProvider && fallbackModel) ? `${fallbackProvider},${fallbackModel}` : ''
+  })
+
+  // Sync model_map entries to config on change
+  $effect(() => {
+    if (!config || !routeInitialized) return
+    const mm = {}
+    for (const entry of modelMapEntries) {
+      if (!entry.alias.trim()) continue
+      if (entry.mode === 'single') {
+        const r = entry.routes[0]
+        if (r?.provider && r?.model) {
+          mm[entry.alias] = `${r.provider},${r.model}`
+        }
+      } else {
+        const routes = entry.routes
+          .filter(r => r.provider && r.model)
+          .map(r => `${r.provider},${r.model}`)
+        if (routes.length > 0) {
+          mm[entry.alias] = routes
+        }
       }
     }
-    return opts
+    config.router.model_map = mm
   })
 
   async function load() {
     try {
+      routeInitialized = false
       config = await api.getConfig(true)
+      const def = config?.router?.default || ''
+      if (def) {
+        const [prov, ...modelParts] = def.split(',')
+        defaultProvider = prov || ''
+        defaultModel = modelParts.join(',')
+      }
+      const fb = config?.router?.fallback || ''
+      if (fb) {
+        const [prov, ...modelParts] = fb.split(',')
+        fallbackProvider = prov || ''
+        fallbackModel = modelParts.join(',')
+      }
+      const mm = config?.router?.model_map || {}
+      modelMapEntries = Object.entries(mm).map(([alias, routeValue]) => {
+        if (Array.isArray(routeValue)) {
+          return {
+            alias,
+            mode: 'fallback',
+            routes: routeValue.map(r => {
+              const [p, ...mParts] = String(r).split(',')
+              return { provider: p || '', model: mParts.join(',') || '' }
+            }),
+          }
+        } else {
+          const [p, ...mParts] = String(routeValue).split(',')
+          return {
+            alias,
+            mode: 'single',
+            routes: [{ provider: p || '', model: mParts.join(',') || '' }],
+          }
+        }
+      })
+      routeInitialized = true
     } catch (e) {
       error = e.message
     }
@@ -43,7 +170,8 @@
 
   function openCreate() {
     editingIdx = -1
-    form = { name: '', type: 'anthropic', base_url: '', api_key: '', auth_scheme: 'x-api-key', models_text: '', timeout: 600 }
+    form = { name: '', type: 'anthropic', base_url: '', api_key: '', auth_scheme: 'x-api-key', models: [], timeout: 600, priority: 100, enabled: true }
+    formModelInput = ''
     showModal = true
   }
 
@@ -54,9 +182,12 @@
       name: p.name, type: p.type, base_url: p.base_url,
       api_key: '',
       auth_scheme: p.auth_scheme || 'x-api-key',
-      models_text: (p.models || []).join('\n'),
+      models: [...(p.models || [])],
       timeout: p.timeout || 600,
+      priority: p.priority ?? 100,
+      enabled: p.enabled !== false,
     }
+    formModelInput = ''
     showModal = true
   }
 
@@ -66,8 +197,10 @@
       type: form.type,
       base_url: form.base_url,
       auth_scheme: form.auth_scheme,
-      models: form.models_text.split('\n').map(s => s.trim()).filter(Boolean),
+      models: form.models,
       timeout: form.timeout,
+      priority: form.priority,
+      enabled: form.enabled !== false,
     }
     if (form.api_key) provider.api_key = form.api_key
 
@@ -83,6 +216,12 @@
   function removeProvider(idx) {
     if (!confirm(`删除 Provider "${config.providers[idx].name}"？`)) return
     config.providers = config.providers.filter((_, i) => i !== idx)
+  }
+
+  function toggleProvider(idx) {
+    const providers = [...config.providers]
+    providers[idx] = { ...providers[idx], enabled: !(providers[idx].enabled !== false) }
+    config.providers = providers
   }
 
   async function save() {
@@ -227,8 +366,10 @@
           <table>
             <thead>
               <tr>
+                <th>状态</th>
                 <th>名称</th>
                 <th>类型</th>
+                <th>优先级</th>
                 <th>Base URL</th>
                 <th>模型</th>
                 <th>认证</th>
@@ -236,17 +377,25 @@
               </tr>
             </thead>
             <tbody>
-              {#each config.providers as p, idx}
-                <tr>
+              {#each sortedProviders as p}
+                {@const origIdx = config.providers.findIndex(x => x.name === p.name)}
+                <tr style={p.enabled === false ? 'opacity: 0.45;' : ''}>
+                  <td>
+                    <label class="toggle-switch" title={!editing ? '编辑模式才能操作' : (p.enabled !== false ? '停用（排除出路由）' : '启用')}>
+                      <input type="checkbox" checked={p.enabled !== false} disabled={!editing} onchange={() => toggleProvider(origIdx)} />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </td>
                   <td><strong>{p.name}</strong></td>
                   <td><span class="badge badge-blue">{p.type}</span></td>
+                  <td>{p.priority ?? 100}</td>
                   <td title={p.base_url} style="max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{p.base_url}</td>
                   <td>{(p.models || []).join(', ')}</td>
                   <td>{p.auth_scheme}</td>
                   {#if editing}
                     <td class="actions">
-                      <button onclick={() => openEdit(idx)}>编辑</button>
-                      <button class="btn-danger" onclick={() => removeProvider(idx)}>删除</button>
+                      <button onclick={() => openEdit(origIdx)}>编辑</button>
+                      <button class="btn-danger" onclick={() => removeProvider(origIdx)}>删除</button>
                     </td>
                   {/if}
                 </tr>
@@ -263,69 +412,136 @@
       <h2>路由</h2>
       <div class="form-row">
         <div class="form-group">
-          <label>默认路由</label>
-          <select bind:value={config.router.default} disabled={!editing}>
+          <label>默认路由 Provider</label>
+          <select bind:value={defaultProvider} disabled={!editing}>
             <option value="">-- 不设置 --</option>
-            {#each routeOptions as opt}
-              <option value={opt}>{opt}</option>
+            {#each providerList as p}
+              <option value={p.name}>{p.name}</option>
             {/each}
           </select>
         </div>
         <div class="form-group">
-          <label>后台任务路由</label>
-          <select bind:value={config.router.background} disabled={!editing}>
-            <option value="">-- 不设置 --</option>
-            {#each routeOptions as opt}
-              <option value={opt}>{opt}</option>
-            {/each}
-          </select>
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>思考路由</label>
-          <select bind:value={config.router.think} disabled={!editing}>
-            <option value="">-- 不设置 --</option>
-            {#each routeOptions as opt}
-              <option value={opt}>{opt}</option>
-            {/each}
-          </select>
-        </div>
-        <div class="form-group">
-          <label>长上下文路由</label>
-          <select bind:value={config.router.long_context} disabled={!editing}>
-            <option value="">-- 不设置 --</option>
-            {#each routeOptions as opt}
-              <option value={opt}>{opt}</option>
+          <label>默认路由模型</label>
+          <select bind:value={defaultModel} disabled={!editing || !defaultProvider}>
+            <option value="">-- 选择模型 --</option>
+            {#each defaultModelOptions as m}
+              <option value={m}>{m}</option>
             {/each}
           </select>
         </div>
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label>长上下文阈值（tokens）</label>
-          <input type="number" bind:value={config.router.long_context_threshold} disabled={!editing} />
+          <label>故障回退路由 Provider</label>
+          <select bind:value={fallbackProvider} disabled={!editing}>
+            <option value="">-- 不设置 --</option>
+            {#each providerList as p}
+              <option value={p.name}>{p.name}</option>
+            {/each}
+          </select>
         </div>
         <div class="form-group">
-          <label>网页搜索路由</label>
-          <select bind:value={config.router.web_search} disabled={!editing}>
-            <option value="">-- 不设置 --</option>
-            {#each routeOptions as opt}
-              <option value={opt}>{opt}</option>
+          <label>故障回退路由模型</label>
+          <select bind:value={fallbackModel} disabled={!editing || !fallbackProvider}>
+            <option value="">-- 选择模型 --</option>
+            {#each fallbackModelOptions as m}
+              <option value={m}>{m}</option>
             {/each}
           </select>
         </div>
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>故障回退路由</label>
-          <select bind:value={config.router.fallback} disabled={!editing}>
-            <option value="">-- 不设置 --</option>
-            {#each routeOptions as opt}
-              <option value={opt}>{opt}</option>
-            {/each}
-          </select>
-        </div>
+      <!-- model_map: structured alias mapping table -->
+      <div class="form-group" style="margin-top: 12px;">
+        <label>模型别名映射（model_map）</label>
+        {#if modelMapEntries.length === 0}
+          <div style="font-size: 12px; color: var(--sidebar-text); padding: 4px 0;">暂无别名映射，点击下方按钮添加</div>
+        {:else}
+          <table style="width: 100%; font-size: 12px; border-collapse: collapse; margin-bottom: 4px;">
+            <thead>
+              <tr style="background: var(--sidebar-bg);">
+                <th style="padding: 4px 8px; text-align: left;">别名</th>
+                <th style="padding: 4px 8px; text-align: left;">模式</th>
+                <th style="padding: 4px 8px; text-align: left;">Provider</th>
+                <th style="padding: 4px 8px; text-align: left;">模型</th>
+                <th style="padding: 4px 8px; width: 80px;"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each modelMapEntries as entry, entryIdx}
+                <tr>
+                  <td rowspan={entry.mode === 'fallback' ? Math.max(entry.routes.length, 1) : 1} style="padding: 4px 8px; vertical-align: top;">
+                    <input
+                      bind:value={entry.alias}
+                      disabled={!editing}
+                      placeholder="claude-sonnet-4-6"
+                      style="width: 130px; font-family: monospace; font-size: 12px;"
+                    />
+                  </td>
+                  <td rowspan={entry.mode === 'fallback' ? Math.max(entry.routes.length, 1) : 1} style="padding: 4px 8px; vertical-align: top;">
+                    <select bind:value={entry.mode} disabled={!editing} onchange={() => {
+                      if (entry.mode === 'fallback' && entry.routes.length === 1) {
+                        const entries = [...modelMapEntries]
+                        entries[entryIdx].routes = [...entries[entryIdx].routes, { provider: '', model: '' }]
+                        modelMapEntries = entries
+                      }
+                    }}>
+                      <option value="single">单路由</option>
+                      <option value="fallback">回退链</option>
+                    </select>
+                  </td>
+                  <td style="padding: 2px 4px;">
+                    <select bind:value={entry.routes[0].provider} disabled={!editing}>
+                      <option value="">--</option>
+                      {#each providerList as p}
+                        <option value={p.name}>{p.name}</option>
+                      {/each}
+                    </select>
+                  </td>
+                  <td style="padding: 2px 4px;">
+                    <select bind:value={entry.routes[0].model} disabled={!editing || !entry.routes[0].provider}>
+                      <option value="">--</option>
+                      {#each (providerList.find(p => p.name === entry.routes[0].provider)?.models || []) as m}
+                        <option value={m}>{m}</option>
+                      {/each}
+                    </select>
+                  </td>
+                  <td rowspan={entry.mode === 'fallback' ? Math.max(entry.routes.length, 1) : 1} style="padding: 4px 8px; vertical-align: top;">
+                    <button onclick={() => addModelMapRoute(entryIdx)} disabled={!editing} title="添加回退路由" style="padding: 1px 6px;">+</button>
+                    <button onclick={() => removeModelMapEntry(entryIdx)} disabled={!editing} class="btn-danger" title="删除此别名" style="padding: 1px 6px;">x</button>
+                  </td>
+                </tr>
+                {#if entry.mode === 'fallback'}
+                  {#each entry.routes.slice(1) as route, routeIdx}
+                    <tr>
+                      <td style="padding: 2px 4px; padding-left: 24px;">
+                        <select bind:value={route.provider} disabled={!editing}>
+                          <option value="">--</option>
+                          {#each providerList as p}
+                            <option value={p.name}>{p.name}</option>
+                          {/each}
+                        </select>
+                      </td>
+                      <td style="padding: 2px 4px;">
+                        <select bind:value={route.model} disabled={!editing || !route.provider}>
+                          <option value="">--</option>
+                          {#each (providerList.find(p => p.name === route.provider)?.models || []) as m}
+                            <option value={m}>{m}</option>
+                          {/each}
+                        </select>
+                      </td>
+                      <td>
+                        <button onclick={() => removeModelMapRoute(entryIdx, routeIdx + 1)} disabled={!editing} class="btn-danger" title="删除" style="padding: 1px 6px;">x</button>
+                      </td>
+                    </tr>
+                  {/each}
+                {/if}
+              {/each}
+            </tbody>
+          </table>
+        {/if}
+        {#if editing}
+          <button onclick={addModelMapEntry} style="margin-top: 4px;">+ 添加别名映射</button>
+        {/if}
       </div>
     </div>
   </div>
@@ -401,12 +617,43 @@
         </div>
       </div>
       <div class="form-group">
-        <label>模型（每行一个）</label>
-        <textarea bind:value={form.models_text} rows="3" placeholder="model-1&#10;model-2"></textarea>
+        <label>模型</label>
+        <div style="display: flex; gap: 6px; margin-bottom: 6px;">
+          <input
+            bind:value={formModelInput}
+            placeholder="输入模型名后回车或点击添加"
+            onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addModel() } }}
+            style="flex: 1;"
+          />
+          <button type="button" onclick={addModel}>添加</button>
+        </div>
+        {#if form.models.length > 0}
+          <div style="display: flex; flex-wrap: wrap; gap: 4px;">
+            {#each form.models as m}
+              <span style="display: inline-flex; align-items: center; gap: 4px; background: var(--sidebar-bg); color: var(--sidebar-active); border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; padding: 2px 8px; font-size: 12px; font-family: monospace;">
+                {m}
+                <button type="button" onclick={() => { form.models = form.models.filter(x => x !== m) }} style="background: none; border: none; cursor: pointer; color: var(--red); padding: 0; font-size: 14px; line-height: 1;">×</button>
+              </span>
+            {/each}
+          </div>
+        {:else}
+          <div style="font-size: 11px; color: var(--sidebar-text);">暂无模型，请在上方添加</div>
+        {/if}
       </div>
       <div class="form-group">
         <label>超时（秒）</label>
         <input type="number" bind:value={form.timeout} />
+      </div>
+      <div class="form-group">
+        <label>优先级（越小越高）</label>
+        <input type="number" bind:value={form.priority} />
+      </div>
+      <div class="form-group">
+        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+          <input type="checkbox" bind:checked={form.enabled} />
+          启用参与路由
+        </label>
+        <div style="font-size: 11px; color: var(--sidebar-text); margin-top: 2px;">停用后不参与路由 fallback 链</div>
       </div>
       <div class="modal-actions">
         <button onclick={() => showModal = false}>取消</button>
@@ -415,3 +662,35 @@
     </div>
   </div>
 {/if}
+
+<style>
+  .toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 18px;
+    cursor: pointer;
+  }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider {
+    position: absolute;
+    inset: 0;
+    background: var(--sidebar-border);
+    border-radius: 9px;
+    transition: background 0.2s;
+  }
+  .toggle-switch input:disabled + .toggle-slider { opacity: 0.4; cursor: not-allowed; }
+  .toggle-slider::before {
+    content: '';
+    position: absolute;
+    height: 12px;
+    width: 12px;
+    left: 3px;
+    bottom: 3px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.2s;
+  }
+  .toggle-switch input:checked + .toggle-slider { background: var(--green); }
+  .toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); }
+</style>

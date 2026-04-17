@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, List, Union
 
 import structlog
 
-from lccg.config.schema import GatewayConfig
+from lccg.config.schema import GatewayConfig, ProviderConfig
 from lccg.provider.registry import ProviderRegistry
-from lccg.router.token_counter import count_tokens
 
 logger = structlog.get_logger()
 
@@ -24,24 +23,30 @@ class RouteResult:
 class RouterEngine:
     """Routes requests to the appropriate provider and model based on configuration."""
 
-    def __init__(self, config: GatewayConfig, registry: ProviderRegistry) -> None:
+    def __init__(
+        self,
+        config: GatewayConfig,
+        registry: ProviderRegistry,
+        providers_config: List[ProviderConfig] | None = None,
+    ) -> None:
         self._config = config
         self._registry = registry
         self._router = config.router
+        self._providers_config = providers_config if providers_config is not None else config.providers
 
     def resolve(self, request: dict[str, Any], request_id: str = "") -> RouteResult:
         """Resolve the target provider and model for a request.
 
         Priority:
         1. Explicit provider/model prefix (e.g. "minimax/MiniMax-M2.7")
-        2. Scenario-based routing (long_context, background, web_search, think)
+        2. model_map alias mapping (model_map config)
         3. Model name lookup in registry
         4. Default fallback
         """
         model = request.get("model", "")
         extras = {"request_id": request_id} if request_id else {}
 
-        # 1. If the model specifies a provider prefix, use it directly
+        # 1. Explicit provider prefix
         if "/" in model:
             provider_name = model.split("/", 1)[0]
             actual_model = model.split("/", 1)[1]
@@ -49,45 +54,36 @@ class RouterEngine:
                 "router.decision",
                 **extras,
                 model=model,
-                route_reason="explicit prefix 'provider/model'",
+                route_reason="explicit prefix",
                 final_provider=provider_name,
                 final_model=actual_model,
             )
             return RouteResult(provider_name=provider_name, model=actual_model)
 
-        # Build scenario analysis for comprehensive logging
-        scenario_decision = self._analyze_scenarios(request)
-        chosen_scenario = scenario_decision.get("triggered")
+        # 2. model_map alias mapping
+        model_map = self._router.model_map
+        if model in model_map:
+            route_value = model_map[model]
+            primary = route_value[0] if isinstance(route_value, list) else route_value
+            provider_name, mapped_model = self._parse_route(primary)
+            logger.info(
+                "router.decision",
+                **extras,
+                model=model,
+                route_reason="model_map alias",
+                final_provider=provider_name,
+                final_model=mapped_model,
+            )
+            return RouteResult(provider_name=provider_name, model=mapped_model, scenario="model_map")
 
-        # 2. Scenario-based routing
-        if chosen_scenario:
-            route_str = getattr(self._router, chosen_scenario, None)
-            if route_str:
-                try:
-                    provider_name, model_name = self._parse_route(route_str)
-                    logger.info(
-                        "router.decision",
-                        **extras,
-                        model=model,
-                        route_reason=f"scenario: {chosen_scenario}",
-                        scenario_detail=scenario_decision.get("detail", ""),
-                        final_provider=provider_name,
-                        final_model=model_name,
-                        scenario_chain=scenario_decision.get("chain", []),
-                    )
-                    return RouteResult(provider_name=provider_name, model=model_name, scenario=chosen_scenario)
-                except ValueError:
-                    pass
-
-        # 3. Try to find a provider that serves this model
+        # 3. Registry lookup
         try:
             provider = self._registry.get_provider_for_model(model)
             logger.info(
                 "router.decision",
                 **extras,
                 model=model,
-                route_reason="registry lookup (no scenario matched)",
-                scenario_chain=scenario_decision.get("chain", []),
+                route_reason="registry lookup",
                 final_provider=provider.name,
                 final_model=model,
             )
@@ -95,15 +91,14 @@ class RouterEngine:
         except KeyError:
             pass
 
-        # 4. Fall back to router default
+        # 4. Default fallback
         if self._router.default:
             provider_name, model_name = self._parse_route(self._router.default)
             logger.info(
                 "router.decision",
                 **extras,
                 model=model,
-                route_reason=f"default fallback (model '{model}' not found in any provider)",
-                scenario_chain=scenario_decision.get("chain", []),
+                route_reason="default fallback",
                 final_provider=provider_name,
                 final_model=model_name,
             )
@@ -113,89 +108,56 @@ class RouterEngine:
             f"Cannot resolve model '{model}': no provider found and no default route configured"
         )
 
-    def _analyze_scenarios(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Analyze all scenarios and return the triggered one plus full decision chain."""
-        chain: list[dict[str, Any]] = []
-        triggered: str | None = None
-        detail = ""
+    def resolve_fallback_chain(
+        self,
+        model: str,
+        failed_provider: str,
+    ) -> list[RouteResult]:
+        """Generate ordered fallback chain excluding the failed provider.
 
-        model = request.get("model", "")
+        Build chain from:
+        1. model_map list items (skip first/main route)
+        2. Other providers sorted by priority (lower number = higher priority)
+        3. Backward-compatible router.fallback (at end)
+        """
+        chain: list[RouteResult] = []
+        seen: set[str] = {failed_provider}
 
-        # long_context
-        if self._router.long_context:
-            token_count = count_tokens(request)
-            threshold = self._router.long_context_threshold
-            hit = token_count > threshold
-            route = self._router.long_context
-            chain.append({
-                "scenario": "long_context",
-                "enabled": True,
-                "tokens": token_count,
-                "threshold": threshold,
-                "hit": hit,
-                "route": route,
-            })
-            if hit and not triggered:
-                triggered = "long_context"
-                detail = f"tokens {token_count} > threshold {threshold}"
-        else:
-            chain.append({"scenario": "long_context", "enabled": False})
+        # 1. model_map list items after the first one
+        model_map = self._router.model_map
+        if model in model_map:
+            route_value = model_map[model]
+            if isinstance(route_value, list):
+                for entry in route_value[1:]:  # skip first (already failed main route)
+                    try:
+                        p, m = self._parse_route(entry)
+                    except ValueError:
+                        continue
+                    if p not in seen:
+                        chain.append(RouteResult(provider_name=p, model=m, scenario="model_map_fallback"))
+                        seen.add(p)
 
-        # background: haiku model
-        bg_hit = bool(model and "haiku" in model.lower() and self._router.background)
-        if self._router.background:
-            chain.append({
-                "scenario": "background",
-                "enabled": True,
-                "model": model,
-                "hint": "model contains 'haiku'",
-                "hit": bg_hit,
-                "route": self._router.background,
-            })
-            if bg_hit and not triggered:
-                triggered = "background"
-                detail = f"model '{model}' matches 'haiku' pattern"
-        else:
-            chain.append({"scenario": "background", "enabled": False})
+        # 2. Other providers sorted by priority, then provider name for stability
+        sorted_providers = sorted(
+            self._providers_config, key=lambda pc: (pc.priority, pc.name),
+        )
+        for pc in sorted_providers:
+            if pc.name not in seen:
+                # Use the provider's registered model name, not the original model
+                fb_model = model if model in pc.models else (pc.models[0] if pc.models else model)
+                chain.append(RouteResult(provider_name=pc.name, model=fb_model, scenario="priority_fallback"))
+                seen.add(pc.name)
 
-        # web_search: tools
-        ws_hit = False
-        if self._router.web_search:
-            tools = request.get("tools", [])
-            tool_names = [t.get("name", "") for t in tools if isinstance(t, dict)]
-            ws_hit = any(t.startswith("web_search") for t in tool_names)
-            chain.append({
-                "scenario": "web_search",
-                "enabled": True,
-                "tools": tool_names[:5],
-                "hit": ws_hit,
-                "route": self._router.web_search,
-            })
-            if ws_hit and not triggered:
-                triggered = "web_search"
-                detail = f"tool '{next(t for t in tool_names if t.startswith('web_search'))}' found"
-        else:
-            chain.append({"scenario": "web_search", "enabled": False})
+        # 3. Backward-compatible router.fallback (at end)
+        if self._router.fallback:
+            try:
+                p, m = self._parse_route(self._router.fallback)
+                if p not in seen:
+                    chain.append(RouteResult(provider_name=p, model=m, scenario="fallback_compat"))
+            except ValueError:
+                pass
 
-        # think: thinking.enabled
-        th_hit = False
-        thinking = request.get("thinking")
-        if thinking and isinstance(thinking, dict) and thinking.get("type") == "enabled" and self._router.think:
-            th_hit = True
-            chain.append({
-                "scenario": "think",
-                "enabled": True,
-                "hit": th_hit,
-                "route": self._router.think,
-            })
-            if th_hit and not triggered:
-                triggered = "think"
-                detail = "thinking.type='enabled'"
-        else:
-            reason = "not enabled" if not self._router.think else "thinking not requested"
-            chain.append({"scenario": "think", "enabled": bool(self._router.think), "hit": False, "reason": reason})
-
-        return {"triggered": triggered, "detail": detail, "chain": chain}
+        return chain
 
     @staticmethod
     def _parse_route(route: str) -> tuple[str, str]:
