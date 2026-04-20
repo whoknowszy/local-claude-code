@@ -61,7 +61,9 @@ async def create_provider(request: Request) -> JSONResponse:
 
     # Check duplicate name
     if any(p.name == new_provider.name for p in config.providers):
-        return JSONResponse(status_code=409, content={"error": f"Provider '{new_provider.name}' already exists"})
+        return JSONResponse(
+            status_code=409, content={"error": f"Provider '{new_provider.name}' already exists"}
+        )
 
     config.providers.append(new_provider)
 

@@ -1,14 +1,13 @@
 """Tests for configuration loading and schema validation."""
 
 import os
-import tempfile
 from pathlib import Path
 
 import pytest
 import yaml
 
-from lccg.config.loader import load_config, _resolve_env_vars
-from lccg.config.schema import GatewayConfig, ProviderType
+from lccg.config.loader import _resolve_env_vars, load_config
+from lccg.config.schema import ProviderType
 
 
 class TestEnvVarResolution:

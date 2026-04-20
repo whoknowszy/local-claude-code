@@ -16,6 +16,7 @@ _ENV_VAR_PATTERN = re.compile(r"\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)")
 
 def _resolve_env_vars(value: str) -> str:
     """Replace ${VAR} and $VAR patterns with environment variable values."""
+
     def replacer(match: re.Match) -> str:
         var_name = match.group(1) or match.group(2)
         return os.environ.get(var_name, match.group(0))
@@ -65,10 +66,11 @@ def load_config(config_path: str | Path | None = None) -> GatewayConfig:
                 f"Please create it manually."
             )
         import structlog
+
         logger = structlog.get_logger()
         logger.info("config.created", path=str(config_path))
 
-    with open(config_path, "r", encoding="utf-8") as f:
+    with open(config_path, encoding="utf-8") as f:
         raw_data = yaml.safe_load(f) or {}
 
     # Resolve environment variables in string values

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, List, Union
+from typing import Any
 
 import structlog
 
@@ -27,12 +27,14 @@ class RouterEngine:
         self,
         config: GatewayConfig,
         registry: ProviderRegistry,
-        providers_config: List[ProviderConfig] | None = None,
+        providers_config: list[ProviderConfig] | None = None,
     ) -> None:
         self._config = config
         self._registry = registry
         self._router = config.router
-        self._providers_config = providers_config if providers_config is not None else config.providers
+        self._providers_config = (
+            providers_config if providers_config is not None else config.providers
+        )
 
     def resolve(self, request: dict[str, Any], request_id: str = "") -> RouteResult:
         """Resolve the target provider and model for a request.
@@ -76,7 +78,9 @@ class RouterEngine:
                 final_provider=provider_name,
                 final_model=mapped_model,
             )
-            return RouteResult(provider_name=provider_name, model=mapped_model, scenario="model_map")
+            return RouteResult(
+                provider_name=provider_name, model=mapped_model, scenario="model_map"
+            )
 
         # 3. Registry lookup
         try:
@@ -136,18 +140,23 @@ class RouterEngine:
                     except ValueError:
                         continue
                     if p not in seen:
-                        chain.append(RouteResult(provider_name=p, model=m, scenario="model_map_fallback"))
+                        chain.append(
+                            RouteResult(provider_name=p, model=m, scenario="model_map_fallback")
+                        )
                         seen.add(p)
 
         # 2. Other providers sorted by priority, then provider name for stability
         sorted_providers = sorted(
-            self._providers_config, key=lambda pc: (pc.priority, pc.name),
+            self._providers_config,
+            key=lambda pc: (pc.priority, pc.name),
         )
         for pc in sorted_providers:
             if pc.name not in seen:
                 # Use the provider's registered model name, not the original model
                 fb_model = model if model in pc.models else (pc.models[0] if pc.models else model)
-                chain.append(RouteResult(provider_name=pc.name, model=fb_model, scenario="priority_fallback"))
+                chain.append(
+                    RouteResult(provider_name=pc.name, model=fb_model, scenario="priority_fallback")
+                )
                 seen.add(pc.name)
 
         # 3. Backward-compatible router.fallback (at end)

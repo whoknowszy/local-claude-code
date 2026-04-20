@@ -29,9 +29,9 @@ def test_pyproject_metadata():
     version_match = re.search(r'^version\s*=\s*"([^"]+)"', content, flags=re.MULTILINE)
     assert version_match is not None, "version not found in pyproject.toml"
     version = version_match.group(1)
-    assert re.match(
-        r"^\d+\.\d+\.\d+$", version
-    ), f"version '{version}' does not match semver pattern"
+    assert re.match(r"^\d+\.\d+\.\d+$", version), (
+        f"version '{version}' does not match semver pattern"
+    )
 
     # Check project.scripts entry
     scripts_match = re.search(r'^lccg\s*=\s*"([^"]+)"', content, flags=re.MULTILINE)

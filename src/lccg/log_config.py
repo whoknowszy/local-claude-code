@@ -26,14 +26,14 @@ def setup_exception_logger(log_dir: str | None = None) -> None:
     Args:
         log_dir: Configurable log directory. Defaults to _DEFAULT_LOGS_DIR (src/logs).
     """
-    LOGS_DIR = Path(log_dir).expanduser() if log_dir else _DEFAULT_LOGS_DIR
-    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    logs_dir = Path(log_dir).expanduser() if log_dir else _DEFAULT_LOGS_DIR
+    logs_dir.mkdir(parents=True, exist_ok=True)
 
     file_logger = logging.getLogger("lccg.file")
 
     # 1) Gateway log: WARNING+ (health transitions, fallback decisions, etc.)
     gateway_handler = RotatingFileHandler(
-        LOGS_DIR / "gateway.log",
+        logs_dir / "gateway.log",
         maxBytes=10 * 1024 * 1024,  # 10 MB
         backupCount=3,
         encoding="utf-8",
@@ -43,7 +43,7 @@ def setup_exception_logger(log_dir: str | None = None) -> None:
 
     # 2) Exceptions log: ERROR+ with traceback
     exc_handler = RotatingFileHandler(
-        LOGS_DIR / "exceptions.log",
+        logs_dir / "exceptions.log",
         maxBytes=10 * 1024 * 1024,
         backupCount=3,
         encoding="utf-8",

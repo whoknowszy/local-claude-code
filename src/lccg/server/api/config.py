@@ -34,6 +34,7 @@ async def get_config(request: Request, reveal: bool = False) -> dict:
 def _providers_equal(a: list, b: list) -> bool:
     """Compare provider lists by serialized JSON (ignoring order)."""
     import json
+
     sa = sorted([json.dumps(p.model_dump(mode="json"), sort_keys=True) for p in a])
     sb = sorted([json.dumps(p.model_dump(mode="json"), sort_keys=True) for p in b])
     return sa == sb
@@ -69,7 +70,9 @@ async def update_config(request: Request) -> JSONResponse:
             new_registry = ProviderRegistry(new_config)
             new_router = RouterEngine(new_config, new_registry)
         except Exception as e:
-            return JSONResponse(status_code=500, content={"error": f"Failed to rebuild provider registry: {e}"})
+            return JSONResponse(
+                status_code=500, content={"error": f"Failed to rebuild provider registry: {e}"}
+            )
 
         request.app.state.config = new_config
         request.app.state.registry = new_registry
@@ -77,6 +80,7 @@ async def update_config(request: Request) -> JSONResponse:
 
         # Close old connections in background
         import asyncio
+
         asyncio.create_task(old_registry.close_all())
     else:
         # Only router config changed — just rebuild router

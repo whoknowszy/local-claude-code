@@ -1,7 +1,5 @@
 """Tests for the server messages endpoint."""
 
-import json
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -51,7 +49,9 @@ class TestAuthMiddleware:
         app, _, _ = _make_app()
         client = TestClient(app)
         # No api_key configured, should pass through
-        response = client.post("/v1/messages", json={"model": "model-1", "max_tokens": 100, "messages": []})
+        response = client.post(
+            "/v1/messages", json={"model": "model-1", "max_tokens": 100, "messages": []}
+        )
         # Will fail because provider is unreachable, but should not be 401
         assert response.status_code != 401
 
@@ -194,7 +194,7 @@ class TestProviderErrorHandling:
     def test_rate_limit_returns_429(self):
         """Mock provider returning 429 Rate Limit."""
         from unittest.mock import AsyncMock, patch
-        import httpx
+
         from lccg.provider.base import ProviderHTTPError
 
         app, config, registry = _make_app()
@@ -207,7 +207,10 @@ class TestProviderErrorHandling:
             new=AsyncMock(
                 side_effect=ProviderHTTPError(
                     status_code=429,
-                    body='{"error": {"type": "rate_limit_error", "message": "Rate limit exceeded"}}',
+                    body=(
+                        '{"error": {"type": "rate_limit_error", '
+                        '"message": "Rate limit exceeded"}}'
+                    ),
                     headers={"retry-after": "30"},
                 )
             ),
@@ -229,6 +232,7 @@ class TestProviderErrorHandling:
     def test_timeout_returns_504(self):
         """Mock provider timeout returns 504."""
         from unittest.mock import AsyncMock, patch
+
         import httpx
 
         app, config, registry = _make_app()
@@ -255,7 +259,8 @@ class TestProviderErrorHandling:
 
     def test_4xx_no_fallback(self):
         """Verify 4XX errors do not trigger fallback."""
-        from unittest.mock import AsyncMock, patch, MagicMock
+        from unittest.mock import AsyncMock, patch
+
         from lccg.provider.base import ProviderHTTPError
 
         # Configure with fallback - use explicit provider prefix to ensure routing
@@ -276,7 +281,10 @@ class TestProviderErrorHandling:
                     models=["fallback-model"],
                 ),
             ],
-            router={"default": "main-provider,main-model", "fallback": "fallback-provider,fallback-model"},
+            router={
+                "default": "main-provider,main-model",
+                "fallback": "fallback-provider,fallback-model",
+            },
         )
         registry = ProviderRegistry(config)
         router = RouterEngine(config, registry)
@@ -287,9 +295,7 @@ class TestProviderErrorHandling:
         fallback_provider = registry.get_provider("fallback-provider")
 
         # Mock main provider to raise 400 error
-        main_mock = AsyncMock(
-            side_effect=ProviderHTTPError(status_code=400, body="bad request")
-        )
+        main_mock = AsyncMock(side_effect=ProviderHTTPError(status_code=400, body="bad request"))
         fallback_mock = AsyncMock()
 
         with patch.object(main_provider, "send_request", main_mock):
@@ -307,8 +313,10 @@ class TestProviderErrorHandling:
 
     def test_5xx_triggers_fallback(self):
         """Verify 5XX errors trigger fallback."""
-        from unittest.mock import AsyncMock, patch, MagicMock
+        from unittest.mock import AsyncMock, MagicMock, patch
+
         import httpx
+
         from lccg.provider.base import ProviderHTTPError
 
         # Configure with fallback - use explicit provider prefix to ensure routing
@@ -329,7 +337,10 @@ class TestProviderErrorHandling:
                     models=["fallback-model"],
                 ),
             ],
-            router={"default": "main-provider,main-model", "fallback": "fallback-provider,fallback-model"},
+            router={
+                "default": "main-provider,main-model",
+                "fallback": "fallback-provider,fallback-model",
+            },
         )
         registry = ProviderRegistry(config)
         router = RouterEngine(config, registry)
@@ -340,9 +351,7 @@ class TestProviderErrorHandling:
         fallback_provider = registry.get_provider("fallback-provider")
 
         # Mock main provider to raise 500 error
-        main_mock = AsyncMock(
-            side_effect=ProviderHTTPError(status_code=500, body="internal error")
-        )
+        main_mock = AsyncMock(side_effect=ProviderHTTPError(status_code=500, body="internal error"))
 
         # Create mock response for fallback provider
         mock_response = MagicMock(spec=httpx.Response)
@@ -378,7 +387,9 @@ class TestProviderErrorHandling:
     def test_model_map_fallback_uses_configured_fallback_model(self):
         """model_map fallback lists should use the alias key, not the resolved model."""
         from unittest.mock import AsyncMock, MagicMock, patch
+
         import httpx
+
         from lccg.provider.base import ProviderHTTPError
 
         config = GatewayConfig(
@@ -455,6 +466,7 @@ class TestRoutingConfigReload:
     def test_config_update_affects_messages_route_without_restart(self, tmp_path):
         """Config saved through the API should be used by later /v1/messages requests."""
         from unittest.mock import AsyncMock, MagicMock, patch
+
         import httpx
 
         initial_config = GatewayConfig(
@@ -509,7 +521,9 @@ class TestRoutingConfigReload:
         send_mock = AsyncMock(return_value=mock_response)
 
         with patch("lccg.server.api.claude_env._load", return_value={}):
-            with patch.object(app.state.registry.get_provider("new-provider"), "send_request", send_mock):
+            with patch.object(
+                app.state.registry.get_provider("new-provider"), "send_request", send_mock
+            ):
                 response = client.post(
                     "/v1/messages",
                     json={"model": "haiku", "max_tokens": 100, "messages": []},
@@ -526,6 +540,7 @@ class TestClaudeEnvModelOverride:
     def test_claude_env_model_override_applies_without_agent_tool(self):
         """Missing tools should not automatically classify a request as a subagent."""
         from unittest.mock import AsyncMock, MagicMock, patch
+
         import httpx
 
         config = GatewayConfig(

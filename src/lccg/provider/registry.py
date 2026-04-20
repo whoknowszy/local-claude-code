@@ -10,7 +10,6 @@ from lccg.transformer.anthropic_passthru import AnthropicPassthruTransformer
 from lccg.transformer.base import BaseTransformer
 from lccg.transformer.openai_convert import OpenAIConvertTransformer
 
-
 _PROVIDER_MAP: dict[ProviderType, type[BaseProvider]] = {
     ProviderType.ANTHROPIC: AnthropicProvider,
     ProviderType.OPENAI: OpenAIProvider,
@@ -53,7 +52,8 @@ class ProviderRegistry:
         if model in self._model_to_provider:
             return self._providers[self._model_to_provider[model]]
 
-        # Try partial match (e.g. "minimax/MiniMax-M2.1" -> provider "minimax", model "MiniMax-M2.1")
+        # Try partial match, e.g. "minimax/MiniMax-M2.1" routes to provider
+        # "minimax" with model "MiniMax-M2.1".
         if "/" in model:
             provider_name, model_name = model.split("/", 1)
             if provider_name in self._providers:

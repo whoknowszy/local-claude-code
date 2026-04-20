@@ -163,7 +163,9 @@ class TestRouterEngine:
         registry = ProviderRegistry(config)
         router = RouterEngine(config, registry)
 
-        chain = router.resolve_fallback_chain(model="claude-opus-4-6", failed_provider="test-provider")
+        chain = router.resolve_fallback_chain(
+            model="claude-opus-4-6", failed_provider="test-provider"
+        )
         provider_names = [r.provider_name for r in chain]
         assert "other-provider" in provider_names  # from model_map list
         assert "test-provider" not in provider_names  # already failed
@@ -205,13 +207,13 @@ class TestRouterEngine:
         chain = router.resolve_fallback_chain(model="some-model", failed_provider="low-priority")
         provider_names = [r.provider_name for r in chain]
         assert provider_names[0] == "high-priority"  # priority 1
-        assert provider_names[1] == "mid-priority"    # priority 50
+        assert provider_names[1] == "mid-priority"  # priority 50
         # Each fallback provider uses its own registered model, not the original model
         assert chain[0].model == "model-y"
         assert chain[1].model == "model-z"
 
     def test_fallback_chain_uses_provider_model_not_original(self):
-        """Fallback to a provider should use that provider's registered model, not the original model."""
+        """Fallback should use the target provider's registered model."""
         config = _make_config(default="test-provider,model-1")
         registry = ProviderRegistry(config)
         router = RouterEngine(config, registry)

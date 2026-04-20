@@ -33,7 +33,6 @@ class TestProviderHealth:
         health.record_failure("p")
         assert health.is_healthy("p") is False
         # Wait a tiny bit for recovery
-        import time
         time.sleep(0.002)
         assert health.is_healthy("p") is True
 

@@ -56,7 +56,11 @@ class TestTransformRequest:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "tool_result", "tool_use_id": "toolu_123", "content": "result text"},
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_123",
+                            "content": "result text",
+                        },
                     ],
                 }
             ],
@@ -299,7 +303,10 @@ class TestTransformResponse:
                 "id": "chatcmpl-123",
                 "model": "gpt-4o",
                 "choices": [
-                    {"message": {"role": "assistant", "content": "Hi"}, "finish_reason": openai_reason}
+                    {
+                        "message": {"role": "assistant", "content": "Hi"},
+                        "finish_reason": openai_reason,
+                    }
                 ],
                 "usage": {"prompt_tokens": 5, "completion_tokens": 3},
             }
@@ -341,12 +348,21 @@ class TestTransformStream:
 
     @pytest.mark.asyncio
     async def test_text_only_stream(self):
-        chunks = self._make_sse_chunks([
-            {"choices": [{"delta": {"role": "assistant", "content": "Hello"}, "finish_reason": None}]},
-            {"choices": [{"delta": {"content": " world"}, "finish_reason": None}]},
-            {"choices": [{"delta": {}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 5, "completion_tokens": 10}},
-            "DONE",
-        ])
+        chunks = self._make_sse_chunks(
+            [
+                {
+                    "choices": [
+                        {"delta": {"role": "assistant", "content": "Hello"}, "finish_reason": None}
+                    ]
+                },
+                {"choices": [{"delta": {"content": " world"}, "finish_reason": None}]},
+                {
+                    "choices": [{"delta": {}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 5, "completion_tokens": 10},
+                },
+                "DONE",
+            ]
+        )
         events = await self._collect_events(chunks)
         event_types = [e["event"] for e in events]
         assert event_types[0] == "message_start"
@@ -360,50 +376,129 @@ class TestTransformStream:
     async def test_tool_calls_stream(self):
         arg1 = '{"loc'
         arg2 = 'ation":"Beijing"}'
-        chunks = self._make_sse_chunks([
-            {"choices": [{"delta": {"role": "assistant", "content": None, "tool_calls": [{"index": 0, "id": "call_1", "type": "function", "function": {"name": "get_weather", "arguments": ""}}]}, "finish_reason": None}]},
-            {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": arg1}}]}, "finish_reason": None}]},
-            {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": arg2}}]}, "finish_reason": None}]},
-            {"choices": [{"delta": {}, "finish_reason": "tool_calls"}], "usage": {"prompt_tokens": 10, "completion_tokens": 20}},
-            "DONE",
-        ])
+        chunks = self._make_sse_chunks(
+            [
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_1",
+                                        "type": "function",
+                                        "function": {"name": "get_weather", "arguments": ""},
+                                    }
+                                ],
+                            },
+                            "finish_reason": None,
+                        }
+                    ]
+                },
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [{"index": 0, "function": {"arguments": arg1}}]
+                            },
+                            "finish_reason": None,
+                        }
+                    ]
+                },
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [{"index": 0, "function": {"arguments": arg2}}]
+                            },
+                            "finish_reason": None,
+                        }
+                    ]
+                },
+                {
+                    "choices": [{"delta": {}, "finish_reason": "tool_calls"}],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+                },
+                "DONE",
+            ]
+        )
         events = await self._collect_events(chunks)
         event_types = [e["event"] for e in events]
 
-        # Should have: message_start, content_block_start(tool_use), 2x content_block_delta(input_json), content_block_stop, message_delta, message_stop
+        # Should have: message_start, content_block_start(tool_use), two
+        # content_block_delta(input_json), content_block_stop, message_delta,
+        # message_stop.
         assert event_types[0] == "message_start"
 
         # Find the tool_use content_block_start
-        tool_starts = [e for e in events if e["event"] == "content_block_start" and e["data"]["content_block"]["type"] == "tool_use"]
+        tool_starts = [
+            e
+            for e in events
+            if e["event"] == "content_block_start"
+            and e["data"]["content_block"]["type"] == "tool_use"
+        ]
         assert len(tool_starts) == 1
         assert tool_starts[0]["data"]["content_block"]["name"] == "get_weather"
 
         # Find input_json deltas
-        json_deltas = [e for e in events if e["event"] == "content_block_delta" and e["data"]["delta"]["type"] == "input_json_delta"]
+        json_deltas = [
+            e
+            for e in events
+            if e["event"] == "content_block_delta"
+            and e["data"]["delta"]["type"] == "input_json_delta"
+        ]
         assert len(json_deltas) == 2
 
         assert events[-1]["event"] == "message_stop"
 
     @pytest.mark.asyncio
     async def test_thinking_stream(self):
-        chunks = self._make_sse_chunks([
-            {"choices": [{"delta": {"role": "assistant", "reasoning_content": "Let me"}, "finish_reason": None}]},
-            {"choices": [{"delta": {"reasoning_content": " think..."}, "finish_reason": None}]},
-            {"choices": [{"delta": {"content": "The answer"}, "finish_reason": None}]},
-            {"choices": [{"delta": {"content": " is 42."}, "finish_reason": None}]},
-            {"choices": [{"delta": {}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 5, "completion_tokens": 15}},
-            "DONE",
-        ])
+        chunks = self._make_sse_chunks(
+            [
+                {
+                    "choices": [
+                        {
+                            "delta": {"role": "assistant", "reasoning_content": "Let me"},
+                            "finish_reason": None,
+                        }
+                    ]
+                },
+                {"choices": [{"delta": {"reasoning_content": " think..."}, "finish_reason": None}]},
+                {"choices": [{"delta": {"content": "The answer"}, "finish_reason": None}]},
+                {"choices": [{"delta": {"content": " is 42."}, "finish_reason": None}]},
+                {
+                    "choices": [{"delta": {}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 5, "completion_tokens": 15},
+                },
+                "DONE",
+            ]
+        )
         events = await self._collect_events(chunks)
 
         # Should have thinking block followed by text block
-        thinking_starts = [e for e in events if e["event"] == "content_block_start" and e["data"]["content_block"]["type"] == "thinking"]
-        text_starts = [e for e in events if e["event"] == "content_block_start" and e["data"]["content_block"]["type"] == "text"]
+        thinking_starts = [
+            e
+            for e in events
+            if e["event"] == "content_block_start"
+            and e["data"]["content_block"]["type"] == "thinking"
+        ]
+        text_starts = [
+            e
+            for e in events
+            if e["event"] == "content_block_start" and e["data"]["content_block"]["type"] == "text"
+        ]
         assert len(thinking_starts) == 1
         assert len(text_starts) == 1
 
         # Thinking block should have signature delta
-        sig_deltas = [e for e in events if e["event"] == "content_block_delta" and e["data"]["delta"]["type"] == "signature_delta"]
+        sig_deltas = [
+            e
+            for e in events
+            if e["event"] == "content_block_delta"
+            and e["data"]["delta"]["type"] == "signature_delta"
+        ]
         assert len(sig_deltas) == 1
 
     @pytest.mark.asyncio

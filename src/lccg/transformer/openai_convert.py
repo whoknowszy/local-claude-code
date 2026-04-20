@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 import structlog
 
@@ -43,7 +44,9 @@ class OpenAIConvertTransformer(BaseTransformer):
                 messages.append({"role": "system", "content": system})
             elif isinstance(system, list):
                 text = "\n".join(
-                    b.get("text", "") for b in system if isinstance(b, dict) and b.get("type") == "text"
+                    b.get("text", "")
+                    for b in system
+                    if isinstance(b, dict) and b.get("type") == "text"
                 )
                 if text:
                     messages.append({"role": "system", "content": text})
@@ -58,7 +61,9 @@ class OpenAIConvertTransformer(BaseTransformer):
             elif role == "assistant":
                 self._convert_assistant_message(msg, messages)
             else:
-                messages.append({"role": role, "content": content if isinstance(content, str) else ""})
+                messages.append(
+                    {"role": role, "content": content if isinstance(content, str) else ""}
+                )
 
         result["messages"] = messages
 
@@ -164,7 +169,9 @@ class OpenAIConvertTransformer(BaseTransformer):
                     tool_msg["content"] = tool_content
                 elif isinstance(tool_content, list):
                     tool_msg["content"] = "\n".join(
-                        b.get("text", "") for b in tool_content if isinstance(b, dict) and b.get("type") == "text"
+                        b.get("text", "")
+                        for b in tool_content
+                        if isinstance(b, dict) and b.get("type") == "text"
                     )
                 else:
                     tool_msg["content"] = ""
@@ -176,15 +183,19 @@ class OpenAIConvertTransformer(BaseTransformer):
                 if source.get("type") == "base64":
                     media_type = source.get("media_type", "image/png")
                     data = source.get("data", "")
-                    text_parts.append({
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{media_type};base64,{data}"},
-                    })
+                    text_parts.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{media_type};base64,{data}"},
+                        }
+                    )
                 elif source.get("type") == "url":
-                    text_parts.append({
-                        "type": "image_url",
-                        "image_url": {"url": source.get("url", "")},
-                    })
+                    text_parts.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": source.get("url", "")},
+                        }
+                    )
 
         if text_parts:
             # If only one text part, simplify to string
@@ -193,7 +204,9 @@ class OpenAIConvertTransformer(BaseTransformer):
             else:
                 messages.append({"role": "user", "content": text_parts})
 
-    def _convert_assistant_message(self, msg: dict[str, Any], messages: list[dict[str, Any]]) -> None:
+    def _convert_assistant_message(
+        self, msg: dict[str, Any], messages: list[dict[str, Any]]
+    ) -> None:
         """Convert an assistant message, handling text, tool_use, and thinking blocks."""
         content = msg.get("content", "")
 
@@ -219,14 +232,16 @@ class OpenAIConvertTransformer(BaseTransformer):
             if block_type == "text":
                 text_parts.append(block.get("text", ""))
             elif block_type == "tool_use":
-                tool_calls.append({
-                    "id": block.get("id", f"call_{uuid.uuid4().hex[:24]}"),
-                    "type": "function",
-                    "function": {
-                        "name": block.get("name", ""),
-                        "arguments": json.dumps(block.get("input", {}), ensure_ascii=False),
-                    },
-                })
+                tool_calls.append(
+                    {
+                        "id": block.get("id", f"call_{uuid.uuid4().hex[:24]}"),
+                        "type": "function",
+                        "function": {
+                            "name": block.get("name", ""),
+                            "arguments": json.dumps(block.get("input", {}), ensure_ascii=False),
+                        },
+                    }
+                )
             elif block_type == "thinking":
                 thinking_content = block.get("thinking", "")
 
@@ -255,11 +270,13 @@ class OpenAIConvertTransformer(BaseTransformer):
         # Thinking/reasoning
         reasoning = message.get("reasoning_content")
         if reasoning:
-            content.append({
-                "type": "thinking",
-                "thinking": reasoning,
-                "signature": f"sig_{int(time.time())}",
-            })
+            content.append(
+                {
+                    "type": "thinking",
+                    "thinking": reasoning,
+                    "signature": f"sig_{int(time.time())}",
+                }
+            )
 
         # Text content
         text = message.get("content")
@@ -275,12 +292,14 @@ class OpenAIConvertTransformer(BaseTransformer):
             except (json.JSONDecodeError, TypeError):
                 input_parsed = {"raw": input_raw}
 
-            content.append({
-                "type": "tool_use",
-                "id": tc.get("id", f"toolu_{uuid.uuid4().hex[:24]}"),
-                "name": func.get("name", ""),
-                "input": input_parsed,
-            })
+            content.append(
+                {
+                    "type": "tool_use",
+                    "id": tc.get("id", f"toolu_{uuid.uuid4().hex[:24]}"),
+                    "name": func.get("name", ""),
+                    "input": input_parsed,
+                }
+            )
 
         if not content:
             content.append({"type": "text", "text": ""})
@@ -392,19 +411,24 @@ class _StreamState:
         # Send message_start on first chunk
         if not self.has_sent_message_start:
             self.has_sent_message_start = True
-            events.append(self._make_event("message_start", {
-                "type": "message_start",
-                "message": {
-                    "id": self.message_id,
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [],
-                    "model": self.model,
-                    "stop_reason": None,
-                    "stop_sequence": None,
-                    "usage": {"input_tokens": 0, "output_tokens": 0},
-                },
-            }))
+            events.append(
+                self._make_event(
+                    "message_start",
+                    {
+                        "type": "message_start",
+                        "message": {
+                            "id": self.message_id,
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [],
+                            "model": self.model,
+                            "stop_reason": None,
+                            "stop_sequence": None,
+                            "usage": {"input_tokens": 0, "output_tokens": 0},
+                        },
+                    },
+                )
+            )
 
         # Thinking (reasoning_content)
         reasoning = delta.get("reasoning_content")
@@ -413,37 +437,65 @@ class _StreamState:
             if self.current_block_type != "thinking":
                 # Close previous block
                 if self.current_block_type:
-                    events.append(self._make_event("content_block_stop", {
-                        "type": "content_block_stop",
-                        "index": self.current_block_index,
-                    }))
+                    events.append(
+                        self._make_event(
+                            "content_block_stop",
+                            {
+                                "type": "content_block_stop",
+                                "index": self.current_block_index,
+                            },
+                        )
+                    )
                 self.current_block_index = self._next_index()
                 self.current_block_type = "thinking"
-                events.append(self._make_event("content_block_start", {
-                    "type": "content_block_start",
-                    "index": self.current_block_index,
-                    "content_block": {"type": "thinking", "thinking": ""},
-                }))
-            events.append(self._make_event("content_block_delta", {
-                "type": "content_block_delta",
-                "index": self.current_block_index,
-                "delta": {"type": "thinking_delta", "thinking": reasoning},
-            }))
+                events.append(
+                    self._make_event(
+                        "content_block_start",
+                        {
+                            "type": "content_block_start",
+                            "index": self.current_block_index,
+                            "content_block": {"type": "thinking", "thinking": ""},
+                        },
+                    )
+                )
+            events.append(
+                self._make_event(
+                    "content_block_delta",
+                    {
+                        "type": "content_block_delta",
+                        "index": self.current_block_index,
+                        "delta": {"type": "thinking_delta", "thinking": reasoning},
+                    },
+                )
+            )
             return events
 
         # If thinking was active and now content starts, close thinking block
         if self.current_block_type == "thinking" and not self.is_thinking_done:
             self.is_thinking_done = True
             # Send signature delta
-            events.append(self._make_event("content_block_delta", {
-                "type": "content_block_delta",
-                "index": self.current_block_index,
-                "delta": {"type": "signature_delta", "signature": f"sig_{int(time.time())}"},
-            }))
-            events.append(self._make_event("content_block_stop", {
-                "type": "content_block_stop",
-                "index": self.current_block_index,
-            }))
+            events.append(
+                self._make_event(
+                    "content_block_delta",
+                    {
+                        "type": "content_block_delta",
+                        "index": self.current_block_index,
+                        "delta": {
+                            "type": "signature_delta",
+                            "signature": f"sig_{int(time.time())}",
+                        },
+                    },
+                )
+            )
+            events.append(
+                self._make_event(
+                    "content_block_stop",
+                    {
+                        "type": "content_block_stop",
+                        "index": self.current_block_index,
+                    },
+                )
+            )
             self.current_block_type = None
 
         # Text content
@@ -451,22 +503,37 @@ class _StreamState:
         if text:
             if self.current_block_type != "text":
                 if self.current_block_type:
-                    events.append(self._make_event("content_block_stop", {
-                        "type": "content_block_stop",
-                        "index": self.current_block_index,
-                    }))
+                    events.append(
+                        self._make_event(
+                            "content_block_stop",
+                            {
+                                "type": "content_block_stop",
+                                "index": self.current_block_index,
+                            },
+                        )
+                    )
                 self.current_block_index = self._next_index()
                 self.current_block_type = "text"
-                events.append(self._make_event("content_block_start", {
-                    "type": "content_block_start",
-                    "index": self.current_block_index,
-                    "content_block": {"type": "text", "text": ""},
-                }))
-            events.append(self._make_event("content_block_delta", {
-                "type": "content_block_delta",
-                "index": self.current_block_index,
-                "delta": {"type": "text_delta", "text": text},
-            }))
+                events.append(
+                    self._make_event(
+                        "content_block_start",
+                        {
+                            "type": "content_block_start",
+                            "index": self.current_block_index,
+                            "content_block": {"type": "text", "text": ""},
+                        },
+                    )
+                )
+            events.append(
+                self._make_event(
+                    "content_block_delta",
+                    {
+                        "type": "content_block_delta",
+                        "index": self.current_block_index,
+                        "delta": {"type": "text_delta", "text": text},
+                    },
+                )
+            )
             return events
 
         # Tool calls
@@ -484,24 +551,34 @@ class _StreamState:
                 }
                 # Close previous block
                 if self.current_block_type:
-                    events.append(self._make_event("content_block_stop", {
-                        "type": "content_block_stop",
-                        "index": self.current_block_index,
-                    }))
+                    events.append(
+                        self._make_event(
+                            "content_block_stop",
+                            {
+                                "type": "content_block_stop",
+                                "index": self.current_block_index,
+                            },
+                        )
+                    )
                 block_idx = self._next_index()
                 self.tool_call_to_block[tc_index] = block_idx
                 self.current_block_type = "tool_use"
                 self.current_block_index = block_idx
-                events.append(self._make_event("content_block_start", {
-                    "type": "content_block_start",
-                    "index": block_idx,
-                    "content_block": {
-                        "type": "tool_use",
-                        "id": self.tool_calls[tc_index]["id"],
-                        "name": self.tool_calls[tc_index]["name"],
-                        "input": {},
-                    },
-                }))
+                events.append(
+                    self._make_event(
+                        "content_block_start",
+                        {
+                            "type": "content_block_start",
+                            "index": block_idx,
+                            "content_block": {
+                                "type": "tool_use",
+                                "id": self.tool_calls[tc_index]["id"],
+                                "name": self.tool_calls[tc_index]["name"],
+                                "input": {},
+                            },
+                        },
+                    )
+                )
             else:
                 # Update name if provided
                 if func.get("name"):
@@ -512,14 +589,19 @@ class _StreamState:
             if args_fragment:
                 self.tool_calls[tc_index]["args"] += args_fragment
                 block_idx = self.tool_call_to_block[tc_index]
-                events.append(self._make_event("content_block_delta", {
-                    "type": "content_block_delta",
-                    "index": block_idx,
-                    "delta": {
-                        "type": "input_json_delta",
-                        "partial_json": args_fragment,
-                    },
-                }))
+                events.append(
+                    self._make_event(
+                        "content_block_delta",
+                        {
+                            "type": "content_block_delta",
+                            "index": block_idx,
+                            "delta": {
+                                "type": "input_json_delta",
+                                "partial_json": args_fragment,
+                            },
+                        },
+                    )
+                )
 
         # Finish reason
         finish_reason = choice.get("finish_reason")
@@ -547,24 +629,39 @@ class _StreamState:
 
         # Close current block
         if self.current_block_type:
-            events.append(self._make_event("content_block_stop", {
-                "type": "content_block_stop",
-                "index": self.current_block_index,
-            }))
+            events.append(
+                self._make_event(
+                    "content_block_stop",
+                    {
+                        "type": "content_block_stop",
+                        "index": self.current_block_index,
+                    },
+                )
+            )
 
         # message_delta with stop_reason
-        events.append(self._make_event("message_delta", {
-            "type": "message_delta",
-            "delta": {
-                "stop_reason": self.stop_reason or "end_turn",
-                "stop_sequence": None,
-            },
-            "usage": self.usage or {"input_tokens": 0, "output_tokens": 0},
-        }))
+        events.append(
+            self._make_event(
+                "message_delta",
+                {
+                    "type": "message_delta",
+                    "delta": {
+                        "stop_reason": self.stop_reason or "end_turn",
+                        "stop_sequence": None,
+                    },
+                    "usage": self.usage or {"input_tokens": 0, "output_tokens": 0},
+                },
+            )
+        )
 
         # message_stop
-        events.append(self._make_event("message_stop", {
-            "type": "message_stop",
-        }))
+        events.append(
+            self._make_event(
+                "message_stop",
+                {
+                    "type": "message_stop",
+                },
+            )
+        )
 
         return events

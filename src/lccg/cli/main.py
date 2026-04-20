@@ -40,9 +40,7 @@ def _is_gateway_running(host: str, port: int) -> bool:
         return False
 
 
-def _start_gateway_background(
-    config_path: str | None, host: str, port: int
-) -> subprocess.Popen:
+def _start_gateway_background(config_path: str | None, host: str, port: int) -> subprocess.Popen:
     """Start gateway as background subprocess."""
     cmd = [sys.executable, "-m", "lccg", "serve"]
     if config_path:
@@ -64,6 +62,7 @@ def _start_gateway_background(
 def _wait_gateway_ready(host: str, port: int, timeout: int = 15) -> bool:
     """Poll /health until gateway is ready."""
     import time
+
     deadline = time.time() + timeout
     while time.time() < deadline:
         if _is_gateway_running(host, port):
@@ -110,10 +109,12 @@ def _setup_logging(
     # Custom filtering wrapper for multi-level selection
     def _level_filter_processor():
         """Filter log entries to only include selected levels."""
+
         def processor(logger, method_name, event_dict):
             if _selected_level_names and method_name not in _selected_level_names:
                 raise structlog.DropEvent
             return event_dict
+
         return processor
 
     if log_dir:
@@ -185,6 +186,7 @@ def _file_and_console_processor():
         nonlocal file_log
         if file_log is None:
             import logging as _logging
+
             file_log = _logging.getLogger("lccg.file")
 
         # Console output
@@ -204,6 +206,7 @@ def _file_and_console_processor():
 
 def _queue_processor(log_queue: queue.Queue):
     """Returns a processor that pushes log entries to the queue for SSE streaming."""
+
     def processor(logger, method_name, event_dict):
         try:
             line = json.dumps(event_dict, ensure_ascii=False, default=str)
@@ -233,10 +236,9 @@ def _find_source_checkout() -> Path | None:
         if (root / ".git").exists() and (root / "pyproject.toml").exists():
             return root
 
-    if (
-        (_DEFAULT_SOURCE_DIR / ".git").exists()
-        and (_DEFAULT_SOURCE_DIR / "pyproject.toml").exists()
-    ):
+    if (_DEFAULT_SOURCE_DIR / ".git").exists() and (
+        _DEFAULT_SOURCE_DIR / "pyproject.toml"
+    ).exists():
         return _DEFAULT_SOURCE_DIR
     return None
 
@@ -262,7 +264,8 @@ def cli() -> None:
 
 @cli.command()
 @click.option(
-    "-c", "--config",
+    "-c",
+    "--config",
     type=click.Path(exists=False),
     default=None,
     help="Path to config file (default: ~/.lccg/config.yaml)",
@@ -307,7 +310,6 @@ def serve(
         log_queue=log_queue,
     )
     logger = structlog.get_logger()
-
 
     # Build provider registry and router
     try:
@@ -391,9 +393,7 @@ def _watch_config(
         print(full_msg, file=sys.stderr, flush=True)
         try:
             log_queue.put_nowait(
-                json.dumps(
-                    {"event": "config_reload", "level": level, "message": full_msg}
-                )
+                json.dumps({"event": "config_reload", "level": level, "message": full_msg})
             )
         except Exception:
             pass
@@ -523,7 +523,9 @@ def status(host: str, port: int) -> None:
 
 @cli.command()
 @click.option(
-    "-c", "--config", "config_path",
+    "-c",
+    "--config",
+    "config_path",
     type=click.Path(exists=True),
     default=None,
     help="Path to config file.",
@@ -539,11 +541,11 @@ def code(config_path: str | None, host: str | None, port: int | None) -> None:
 
     # 检查 providers 是否为空，给出友好提示
     if not cfg.providers:
-        click.echo(
-            click.style("⚠ 未配置任何 Provider", fg="yellow", bold=True)
-        )
+        click.echo(click.style("⚠ 未配置任何 Provider", fg="yellow", bold=True))
         click.echo(f"  请编辑配置文件添加 Provider: {config_path or '~/.lccg/config.yaml'}")
-        click.echo("  参考示例: https://github.com/whoknowszy/local-claude-code/blob/main/config.example.yaml")
+        click.echo(
+            "  参考示例: https://github.com/whoknowszy/local-claude-code/blob/main/config.example.yaml"
+        )
         click.echo()
 
     h = host or cfg.server.host
@@ -572,17 +574,11 @@ def code(config_path: str | None, host: str | None, port: int | None) -> None:
         env["ANTHROPIC_API_KEY"] = cfg.server.api_key or "sk-gateway-placeholder"
 
     # 4. 启动 claude（前台阻塞）
-    console.print(
-        f"[green]Launching Claude Code "
-        f"(ANTHROPIC_BASE_URL={base_url})[/green]"
-    )
+    console.print(f"[green]Launching Claude Code (ANTHROPIC_BASE_URL={base_url})[/green]")
     try:
         subprocess.run(["claude"], env=env)
     except FileNotFoundError:
-        console.print(
-            "[red]'claude' command not found. "
-            "Please install Claude Code first.[/red]"
-        )
+        console.print("[red]'claude' command not found. Please install Claude Code first.[/red]")
     except KeyboardInterrupt:
         pass
 
@@ -614,9 +610,7 @@ def stop() -> None:
         os.kill(pid, signal.SIGTERM)
         console.print(f"[green]Gateway (PID {pid}) stopped.[/green]")
     except ProcessLookupError:
-        console.print(
-            f"[yellow]Gateway (PID {pid}) already stopped.[/yellow]"
-        )
+        console.print(f"[yellow]Gateway (PID {pid}) already stopped.[/yellow]")
     _PID_FILE.unlink(missing_ok=True)
 
 

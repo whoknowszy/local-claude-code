@@ -83,7 +83,10 @@ class TestTokenCounter:
                 {
                     "role": "assistant",
                     "content": [
-                        {"type": "thinking", "thinking": "This is a long thinking block with many words."},
+                        {
+                            "type": "thinking",
+                            "thinking": "This is a long thinking block with many words.",
+                        },
                         {"type": "text", "text": "The answer is 42."},
                     ],
                 }

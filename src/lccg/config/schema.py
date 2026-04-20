@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -42,7 +42,7 @@ class RouterConfig(BaseModel):
     model_config = {"protected_namespaces": ()}
 
     default: Optional[str] = None
-    model_map: Dict[str, Union[str, List[str]]] = Field(default_factory=dict)
+    model_map: dict[str, Union[str, list[str]]] = Field(default_factory=dict)
     fallback: Optional[str] = None  # Global fallback: "provider,model"
 
 

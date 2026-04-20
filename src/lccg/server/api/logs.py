@@ -30,7 +30,8 @@ async def stream_logs(request: Request) -> StreamingResponse:
         while True:
             if await request.is_disconnected():
                 break
-            # Run blocking queue.get() in a thread so it doesn't block the event loop (Python 3.9 compatible)
+            # Run blocking queue.get() in a thread so it doesn't block the event
+            # loop. This keeps the path compatible with Python 3.9.
             line = await loop.run_in_executor(None, _queue_get, q, 30.0)
             if line is None:
                 yield b": heartbeat\n\n"

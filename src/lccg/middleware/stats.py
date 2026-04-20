@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from threading import Lock
 from typing import Any
 
@@ -70,7 +70,7 @@ class StatsCollector:
         with self._lock:
             self._records.append(rec)
             if len(self._records) > self._max:
-                self._records = self._records[-self._max:]
+                self._records = self._records[-self._max :]
 
     def start_timer(self) -> RequestTimer:
         """Start timing a request."""

@@ -12,8 +12,10 @@ router = APIRouter(prefix="/api")
 async def get_stats(request: Request) -> JSONResponse:
     """Get request statistics."""
     stats = request.app.state.stats
-    return JSONResponse(content={
-        "summary": stats.get_summary(),
-        "providers": stats.get_per_provider(),
-        "recent": stats.get_recent(20),
-    })
+    return JSONResponse(
+        content={
+            "summary": stats.get_summary(),
+            "providers": stats.get_per_provider(),
+            "recent": stats.get_recent(20),
+        }
+    )
