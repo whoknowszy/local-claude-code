@@ -99,9 +99,15 @@ class OpenAIConvertTransformer(BaseTransformer):
             elif isinstance(tool_choice, str):
                 result["tool_choice"] = tool_choice
 
-        # Thinking → enable_thinking
+        # Thinking → enable_thinking. Some OpenAI-compatible providers reject
+        # thinking-enabled requests when prior assistant tool calls have no
+        # reasoning_content, which older Anthropic histories often omit.
         thinking = anthropic_request.get("thinking")
-        if thinking and thinking.get("type") == "enabled":
+        if (
+            thinking
+            and thinking.get("type") == "enabled"
+            and not self._has_tool_call_without_reasoning(messages)
+        ):
             result["enable_thinking"] = True
             if thinking.get("budget_tokens"):
                 result["reasoning_effort"] = "high"
@@ -116,6 +122,16 @@ class OpenAIConvertTransformer(BaseTransformer):
             pass
 
         return result
+
+    @staticmethod
+    def _has_tool_call_without_reasoning(messages: list[dict[str, Any]]) -> bool:
+        """Return true if thinking mode would violate provider tool-call history rules."""
+        return any(
+            msg.get("role") == "assistant"
+            and bool(msg.get("tool_calls"))
+            and not msg.get("reasoning_content")
+            for msg in messages
+        )
 
     def _convert_user_message(self, msg: dict[str, Any], messages: list[dict[str, Any]]) -> None:
         """Convert a user message, handling tool_result and content blocks."""

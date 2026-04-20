@@ -150,6 +150,41 @@ class TestTransformRequest:
         result = self.transformer.transform_request(request)
         assert result["enable_thinking"] is True
 
+    def test_thinking_disabled_when_tool_call_history_lacks_reasoning(self):
+        request = {
+            "model": "kimi-k2.5",
+            "max_tokens": 100,
+            "thinking": {"type": "enabled", "budget_tokens": 5000},
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_abc",
+                            "name": "read_file",
+                            "input": {"path": "app.py"},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_abc",
+                            "content": "file contents",
+                        },
+                    ],
+                },
+            ],
+        }
+
+        result = self.transformer.transform_request(request)
+
+        assert "enable_thinking" not in result
+        assert "reasoning_effort" not in result
+
     def test_metadata_fields_removed(self):
         request = {
             "model": "gpt-4o",
