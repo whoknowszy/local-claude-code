@@ -24,9 +24,9 @@ jobs:
 
       - name: Run tests
         run: |
-          uv sync
-          uv pytest
+          uv sync --extra dev
+          uv run pytest
 
       - name: Lint
         run: |
-          uv ruff check .
+          uv run ruff check .
