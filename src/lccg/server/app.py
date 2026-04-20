@@ -218,6 +218,22 @@ def create_app(
             all_headers=headers_to_log,
         )
 
+        # Override the request model with Claude's configured main-session model before
+        # routing so model_map can still resolve provider/model as a pair.
+        from lccg.server.api.claude_env import _load as load_claude_env
+        claude_env = load_claude_env()
+        env_model = claude_env.get("model", "").strip()
+        if env_model and not is_subagent:
+            if env_model != model:
+                logger.info(
+                    "gateway.model_override",
+                    request_id=request_id,
+                    original_model=model,
+                    override_model=env_model,
+                    is_subagent=is_subagent,
+                )
+            body["model"] = env_model
+
         # Resolve route
         try:
             route = router.resolve(body)
@@ -238,26 +254,6 @@ def create_app(
             scenario=route.scenario,
             is_subagent=is_subagent,
         )
-
-        # Override model with ANTHROPIC_MODEL from claude-env.json if set
-        # Skip override for subagent requests - they should use the configured model_map
-        from lccg.server.api.claude_env import _load as load_claude_env
-        claude_env = load_claude_env()
-        env_model = claude_env.get("model", "").strip()
-        if env_model and not is_subagent:
-            if env_model != route.model:
-                logger.info(
-                    "gateway.model_override",
-                    request_id=request_id,
-                    original_model=route.model,
-                    override_model=env_model,
-                    is_subagent=is_subagent,
-                )
-            route = RouteResult(
-                provider_name=route.provider_name,
-                model=env_model,
-                scenario=route.scenario,
-            )
 
         # Check provider health, try fallback if unhealthy
         if not health_tracker.is_healthy(route.provider_name) and config.router.fallback:
