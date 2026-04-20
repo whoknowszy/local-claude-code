@@ -28,6 +28,7 @@ from lccg.server.app import create_app
 console = Console()
 
 _PID_FILE = Path.home() / ".lccg" / "gateway.pid"
+_DEFAULT_SOURCE_DIR = Path.home() / ".lccg" / "source"
 
 
 def _is_gateway_running(host: str, port: int) -> bool:
@@ -71,7 +72,11 @@ def _wait_gateway_ready(host: str, port: int, timeout: int = 15) -> bool:
     return False
 
 
-def _setup_logging(level: str, log_dir: str | None = None, log_queue: queue.Queue | None = None) -> None:
+def _setup_logging(
+    level: str,
+    log_dir: str | None = None,
+    log_queue: queue.Queue | None = None,
+) -> None:
     """Configure structlog with session-based file logging.
 
     Each session creates a new log file: lccg-{YYYYMMDDHHmmss}.log
@@ -220,6 +225,35 @@ def _cleanup_old_logs(log_dir: Path, keep: int = 3) -> None:
         pass
 
 
+def _find_source_checkout() -> Path | None:
+    """Find the git checkout used for editable installs."""
+    current = Path(__file__).resolve()
+    module_root = current.parent
+    for root in [module_root, *module_root.parents]:
+        if (root / ".git").exists() and (root / "pyproject.toml").exists():
+            return root
+
+    if (
+        (_DEFAULT_SOURCE_DIR / ".git").exists()
+        and (_DEFAULT_SOURCE_DIR / "pyproject.toml").exists()
+    ):
+        return _DEFAULT_SOURCE_DIR
+    return None
+
+
+def _run_checked(command: list[str]) -> None:
+    """Run a subprocess and convert failures into Click exits."""
+    console.print(f"[cyan]$ {' '.join(command)}[/cyan]")
+    try:
+        subprocess.run(command, check=True)
+    except FileNotFoundError as e:
+        console.print(f"[red]Command not found:[/red] {e.filename}")
+        raise SystemExit(1) from e
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]Command failed with exit code {e.returncode}[/red]")
+        raise SystemExit(e.returncode) from e
+
+
 @click.group()
 @click.version_option(package_name="lccg")
 def cli() -> None:
@@ -267,7 +301,11 @@ def serve(
 
     # Setup logging with queue for UI log streaming
     log_queue: queue.Queue = queue.Queue()
-    _setup_logging(gateway_config.logging.level, gateway_config.logging.log_dir, log_queue=log_queue)
+    _setup_logging(
+        gateway_config.logging.level,
+        gateway_config.logging.log_dir,
+        log_queue=log_queue,
+    )
     logger = structlog.get_logger()
 
 
@@ -281,7 +319,13 @@ def serve(
 
     # Create FastAPI app
     config_path_val = config if config else str(Path.home() / ".lccg" / "config.yaml")
-    app = create_app(gateway_config, registry, router, config_path=config_path_val, log_queue=log_queue)
+    app = create_app(
+        gateway_config,
+        registry,
+        router,
+        config_path=config_path_val,
+        log_queue=log_queue,
+    )
 
     # Display startup banner
     version = importlib.metadata.version("lccg")
@@ -346,7 +390,11 @@ def _watch_config(
         full_msg = f"[lccg] {level.upper()}: {msg % args}"
         print(full_msg, file=sys.stderr, flush=True)
         try:
-            log_queue.put_nowait(json.dumps({"event": "config_reload", "level": level, "message": full_msg}))
+            log_queue.put_nowait(
+                json.dumps(
+                    {"event": "config_reload", "level": level, "message": full_msg}
+                )
+            )
         except Exception:
             pass
 
@@ -371,7 +419,7 @@ def _watch_config(
 
                         # Rebuild registry and router
                         new_registry = ProviderRegistry(new_config)
-                        new_router = RouterEngine(new_config, new_registry)
+                        RouterEngine(new_config, new_registry)
 
                         # Update shared state references
                         registry._providers = new_registry._providers
@@ -396,10 +444,6 @@ def _watch_config(
 
     thread = threading.Thread(target=_check, daemon=True, name="config-watcher")
     thread.start()
-
-
-if __name__ == "__main__":
-    cli()
 
 
 @cli.command()
@@ -575,3 +619,29 @@ def stop() -> None:
         )
     _PID_FILE.unlink(missing_ok=True)
 
+
+@cli.command()
+def update() -> None:
+    """Pull the local source checkout and reinstall the editable package."""
+    src_dir = _find_source_checkout()
+    if src_dir is None:
+        console.print("[red]Cannot find a local LCCG source checkout.[/red]")
+        console.print(
+            "Reinstall with [cyan]install.sh[/cyan] / [cyan]install.ps1[/cyan], "
+            "or run from a cloned repository."
+        )
+        raise SystemExit(1)
+
+    console.print(f"[bold]Updating LCCG from:[/bold] {src_dir}")
+    _run_checked(["git", "-C", str(src_dir), "pull", "--ff-only", "origin", "main"])
+    _run_checked([sys.executable, "-m", "pip", "install", "-e", str(src_dir)])
+
+    try:
+        version = importlib.metadata.version("lccg")
+        console.print(f"[green]Update complete. lccg v{version} is installed.[/green]")
+    except importlib.metadata.PackageNotFoundError:
+        console.print("[green]Update complete.[/green]")
+
+
+if __name__ == "__main__":
+    cli()

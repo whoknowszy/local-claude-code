@@ -1,147 +1,114 @@
-# 安装指南
+# 安装与更新
+
+LCCG 现在以 Git 仓库作为本地更新源安装，不再依赖 GitHub Release、pyz 包、pipx 或 uv tool。
+
+安装脚本会把源码克隆到固定目录，然后用 editable install 安装 Python 命令：
+
+- macOS / Linux / Git Bash: `~/.lccg/source`
+- Windows PowerShell: `%USERPROFILE%\.lccg\source`
+
+后续只需要运行 `lccg update`，它会在这个源码目录里执行 `git pull --ff-only origin main`，再重新执行 `pip install -e`。
 
 ## 前提条件
 
 - Python 3.9 或更高版本
-- 网络可访问 GitHub（`github.com`）
-
----
+- Git
+- 网络可访问 GitHub
 
 ## macOS / Linux
 
-### 方式一：一键安装（推荐）
+一键安装：
 
 ```bash
 curl -sL https://raw.githubusercontent.com/whoknowszy/local-claude-code/main/install.sh | bash
 ```
 
-### 方式二：逐行执行
+本地仓库安装：
 
 ```bash
-# 1. 确保 Python 3.9+ 已安装
-python3 --version
-
-# 2. 安装 lccg（从 GitHub 最新代码）
-pip install --force-reinstall --no-cache-dir --no-deps git+https://github.com/whoknowszy/local-claude-code.git@main
-
-# 3. 验证安装
-lccg --version
+git clone https://github.com/whoknowszy/local-claude-code.git
+cd local-claude-code
+bash install.sh
 ```
 
-### 方式三：pipx 安装（适合多项目隔离）
+更新：
 
 ```bash
-# 如果系统已安装 pipx
-pipx install git+https://github.com/whoknowszy/local-claude-code.git@main
-
-# 后续更新
-pipx upgrade lccg
+lccg update
 ```
 
----
+也可以直接运行脚本：
+
+```bash
+bash ~/.lccg/source/tools/update.sh
+```
 
 ## Windows
 
-### 方式一：一键安装（PowerShell，推荐）
+PowerShell 一键安装：
 
 ```powershell
 irm https://raw.githubusercontent.com/whoknowszy/local-claude-code/main/install.ps1 | iex
 ```
 
-> 如果遇到执行策略限制，运行：
-> ```powershell
-> Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-> ```
-> 然后重新执行上述命令。
-
-### 方式二：逐行执行（PowerShell）
+本地仓库安装：
 
 ```powershell
-# 1. 确保 Python 3.9+ 已安装
-python --version
-
-# 2. 安装 lccg（从 GitHub 最新代码）
-pip install --force-reinstall --no-cache-dir --no-deps git+https://github.com/whoknowszy/local-claude-code.git@main
-
-# 3. 验证安装
-lccg --version
-```
-
-### 方式三：Git clone 后本地安装
-
-```bash
-# clone 仓库
 git clone https://github.com/whoknowszy/local-claude-code.git
 cd local-claude-code
-
-# 运行安装脚本
-bash install.sh      # macOS/Linux Git Bash
-.\install.ps1        # Windows PowerShell
+.\install.ps1
 ```
 
----
+更新：
 
-## 首次配置
-
-安装完成后，创建配置文件：
-
-```bash
-lccg serve
+```powershell
+lccg update
 ```
 
-首次启动会自动在 `~/.lccg/config.yaml` 创建默认配置。请编辑配置文件添加你的 Provider API Key。
+也可以直接运行脚本：
 
----
-
-## 更新
-
-每次代码更新后，重新执行安装命令即可覆盖更新：
-
-```bash
-# macOS/Linux
-curl -sL https://raw.githubusercontent.com/whoknowszy/local-claude-code/main/install.sh | bash
-
-# Windows PowerShell
-irm https://raw.githubusercontent.com/whoknowszy/local-claude-code/main/install.ps1 | iex
+```powershell
+& "$HOME\.lccg\source\tools\update.ps1"
 ```
 
----
+如果 PowerShell 执行策略阻止本地脚本，可以先运行：
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+## 配置
+
+安装脚本会创建配置文件：
+
+```text
+~/.lccg/config.yaml
+```
+
+请编辑这个文件添加 Provider API Key。安装脚本也会把 `ANTHROPIC_BASE_URL` 指向本地网关：
+
+```text
+http://127.0.0.1:8765
+```
 
 ## 使用
 
-### 推荐：一键启动
+推荐：
 
 ```bash
 lccg code
 ```
 
-自动完成以下操作：
-- 检测网关是否已运行（避免端口冲突）
-- 启动网关（如需要）
-- 注入环境变量（无需手动 export）
-- 启动 Claude Code
-
-### 手动管理网关
+手动管理：
 
 ```bash
-# 启动网关
 lccg serve
-
-# 查看状态
 lccg status
-
-# 停止后台网关
 lccg stop
 ```
 
-启动后访问 http://127.0.0.1:8765/ui/ 查看仪表盘。
+启动后访问：
 
-### 传统方式（已废弃）
-
-如需手动设置环境变量：
-
-```bash
-export ANTHROPIC_BASE_URL=http://127.0.0.1:8765
+```text
+http://127.0.0.1:8765/ui/
 ```
-
-> 注意：使用 `lccg code` 时无需手动设置环境变量，命令会自动处理。

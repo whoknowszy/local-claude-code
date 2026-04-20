@@ -19,6 +19,7 @@ error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 
 OS="$(uname -s)"
 PYTHON_CMD=""
+REPO_URL="https://github.com/whoknowszy/local-claude-code.git"
 
 detect_python() {
     info "检测 Python..."
@@ -49,6 +50,14 @@ detect_python() {
 }
 
 install_lccg() {
+    if ! command -v git &>/dev/null; then
+        error "未找到 Git，请先安装 Git 后重试"
+        if [[ "$OS" == "Darwin" ]]; then
+            info "macOS 推荐: xcode-select --install 或 brew install git"
+        fi
+        exit 1
+    fi
+
     # 判断本地源码目录是否可用（curl 管道执行时 $0 不是真实路径）
     local SRC_DIR
     SRC_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)" || SRC_DIR=""
@@ -56,11 +65,15 @@ install_lccg() {
         # 远程执行：clone 仓库后本地安装
         local CLONE_DIR="$HOME/.lccg/source"
         info "远程执行模式，克隆仓库到 $CLONE_DIR ..."
-        if [[ -d "$CLONE_DIR" ]]; then
+        if [[ -d "$CLONE_DIR/.git" ]]; then
             info "仓库已存在，拉取最新..."
-            git -C "$CLONE_DIR" pull || warn "git pull 失败，使用现有代码继续"
+            git -C "$CLONE_DIR" pull --ff-only origin main || warn "git pull 失败，使用现有代码继续"
         else
-            git clone https://github.com/whoknowszy/local-claude-code.git "$CLONE_DIR"
+            if [[ -e "$CLONE_DIR" ]]; then
+                error "$CLONE_DIR 已存在但不是 Git 仓库，请先移动或删除该目录后重试"
+                exit 1
+            fi
+            git clone "$REPO_URL" "$CLONE_DIR"
         fi
         SRC_DIR="$CLONE_DIR"
     fi

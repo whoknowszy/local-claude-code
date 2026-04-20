@@ -13,9 +13,6 @@ rm -rf dist/
 rm -rf build/
 rm -rf *.egg-info/
 
-# Remove pyz files
-find . -name "*.pyz" -type f -delete
-
 # Remove test installations
 if command -v uv &> /dev/null; then
     echo "Removing test virtual environments..."
