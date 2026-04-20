@@ -240,10 +240,11 @@ def create_app(
         )
 
         # Override model with ANTHROPIC_MODEL from claude-env.json if set
+        # Skip override for subagent requests - they should use the configured model_map
         from lccg.server.api.claude_env import _load as load_claude_env
         claude_env = load_claude_env()
         env_model = claude_env.get("model", "").strip()
-        if env_model:
+        if env_model and not is_subagent:
             if env_model != route.model:
                 logger.info(
                     "gateway.model_override",
