@@ -56,21 +56,18 @@ def _mask_body(body: dict[str, Any], model: str = "") -> dict[str, Any]:
         # NOTE: Agent tool presence means the *main session* is making the request
         # (it has all tools including Agent to delegate to subagents).
         # A subagent's own request does NOT have the Agent tool.
-        # So has_agent_tool=true actually means "NOT a subagent (is main session)".
-        # We leave is_subagent detection to future improvement.
         result["has_agent_tool"] = "Agent" in tool_names
+        result["is_subagent"] = not result["has_agent_tool"]
     else:
         result["has_agent_tool"] = False
+        # Missing tools is not a reliable subagent signal; treat unknown requests as
+        # main-session requests so Claude's configured model override still applies.
+        result["is_subagent"] = False
 
     # Thinking info
     thinking = body.get("thinking")
     if thinking:
         result["thinking"] = thinking.get("type", "enabled")
-
-    # Subagent detection: has_agent_tool = "Agent" in tool_names
-    # - Main session: has Agent tool (can delegate to subagents) -> has_agent_tool=True
-    # - Subagent: does NOT have Agent tool (is a leaf agent) -> has_agent_tool=False
-    result["is_subagent"] = not result["has_agent_tool"]
 
     # Check for system prompt indicators
     system_prompt = ""
@@ -156,11 +153,14 @@ def create_app(
         """Handle Anthropic Messages API requests."""
         request_id = uuid.uuid4().hex[:12]
         client_ip = _client_ip(request)
+        active_config: GatewayConfig = request.app.state.config
+        active_registry: ProviderRegistry = request.app.state.registry
+        active_router: RouterEngine = request.app.state.router
 
         # Auth check (if proxy api_key is configured)
-        if config.server.api_key:
+        if active_config.server.api_key:
             api_key = request.headers.get("x-api-key", "")
-            if api_key != config.server.api_key:
+            if api_key != active_config.server.api_key:
                 logger.warning("gateway.auth_failed", request_id=request_id, client_ip=client_ip)
                 return _error_response(401, "authentication_error", "Invalid API key", request_id)
 
@@ -231,12 +231,14 @@ def create_app(
                     original_model=model,
                     override_model=env_model,
                     is_subagent=is_subagent,
-                )
+            )
             body["model"] = env_model
+
+        route_key = body.get("model", "")
 
         # Resolve route
         try:
-            route = router.resolve(body)
+            route = active_router.resolve(body)
         except ValueError as e:
             logger.error(
                 "gateway.route_error",
@@ -256,8 +258,8 @@ def create_app(
         )
 
         # Check provider health, try fallback if unhealthy
-        if not health_tracker.is_healthy(route.provider_name) and config.router.fallback:
-            fb_provider, fb_model = RouterEngine._parse_route(config.router.fallback)
+        if not health_tracker.is_healthy(route.provider_name) and active_config.router.fallback:
+            fb_provider, fb_model = RouterEngine._parse_route(active_config.router.fallback)
             if fb_provider != route.provider_name:
                 logger.warning(
                     "gateway.health_fallback",
@@ -274,7 +276,7 @@ def create_app(
 
         # Get provider
         try:
-            provider = registry.get_provider(route.provider_name)
+            provider = active_registry.get_provider(route.provider_name)
         except KeyError:
             logger.error(
                 "gateway.provider_not_found",
@@ -291,7 +293,7 @@ def create_app(
         body["model"] = route.model
 
         # Select transformer based on provider type
-        transformer = registry.get_transformer_for_provider(route.provider_name)
+        transformer = active_registry.get_transformer_for_provider(route.provider_name)
         payload = transformer.transform_request(body)
 
         if is_stream:
@@ -299,13 +301,15 @@ def create_app(
                 request, provider, payload, transformer,
                 health_tracker, route.provider_name, stats, stats_model, route.scenario,
                 request_id=request_id, client_ip=client_ip,
-                router=router, registry=registry, body=body, config=config,
+                router=active_router, registry=active_registry, body=body, config=active_config,
+                fallback_model=route_key,
             )
         else:
             return await _handle_non_streaming(
                 provider, payload, transformer, health_tracker, route.provider_name,
-                router, registry, body, config, stats, stats_model, route.scenario,
+                active_router, active_registry, body, active_config, stats, stats_model, route.scenario,
                 request_id=request_id, client_ip=client_ip,
+                fallback_model=route_key,
             )
 
     # Mount UI API routers
@@ -344,6 +348,7 @@ async def _handle_non_streaming(
     scenario: str | None = None,
     request_id: str = "",
     client_ip: str = "",
+    fallback_model: str | None = None,
 ) -> JSONResponse:
     """Handle non-streaming request with fallback support."""
     timer = stats.start_timer() if stats else None
@@ -476,7 +481,10 @@ async def _handle_non_streaming(
 
         # Try fallback chain for 5XX/timeout/connection errors
         if should_fallback and config and router and registry and body:
-            fallback_chain = router.resolve_fallback_chain(model=model, failed_provider=provider_name)
+            fallback_chain = router.resolve_fallback_chain(
+                model=fallback_model or model,
+                failed_provider=provider_name,
+            )
             for fb_route in fallback_chain:
                 logger.warning(
                     "gateway.fallback",
@@ -566,6 +574,7 @@ async def _handle_streaming(
     registry: ProviderRegistry | None = None,
     body: dict[str, Any] | None = None,
     config: GatewayConfig | None = None,
+    fallback_model: str | None = None,
 ) -> StreamingResponse:
     """Handle streaming request with fallback support."""
     timer = stats.start_timer() if stats else None
@@ -684,7 +693,10 @@ async def _handle_streaming(
 
             # Try fallback chain for 5XX/timeout/connection errors (not 4XX)
             if should_fallback and config and router and registry and body:
-                fallback_chain = router.resolve_fallback_chain(model=model, failed_provider=provider_name)
+                fallback_chain = router.resolve_fallback_chain(
+                    model=fallback_model or model,
+                    failed_provider=provider_name,
+                )
                 for fb_route in fallback_chain:
                     logger.warning(
                         "gateway.stream_fallback",

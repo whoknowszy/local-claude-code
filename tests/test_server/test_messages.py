@@ -11,6 +11,12 @@ from lccg.router.engine import RouterEngine
 from lccg.server.app import create_app
 
 
+@pytest.fixture(autouse=True)
+def _empty_claude_env(monkeypatch):
+    """Keep server tests independent from the developer's local Claude settings."""
+    monkeypatch.setattr("lccg.server.api.claude_env._load", lambda: {})
+
+
 def _make_app(**config_kwargs) -> tuple:
     """Create a test app with given config overrides."""
     config = GatewayConfig(
@@ -368,3 +374,198 @@ class TestProviderErrorHandling:
         assert data["content"][0]["text"] == "Hello from fallback"
         # Verify fallback provider was called
         fallback_mock.assert_called_once()
+
+    def test_model_map_fallback_uses_configured_fallback_model(self):
+        """model_map fallback lists should use the alias key, not the resolved model."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        import httpx
+        from lccg.provider.base import ProviderHTTPError
+
+        config = GatewayConfig(
+            providers=[
+                ProviderConfig(
+                    name="minimax",
+                    type=ProviderType.ANTHROPIC,
+                    priority=1,
+                    base_url="https://api.minimax.com/v1/messages",
+                    api_key="sk-main",
+                    models=["MiniMax-M2.7"],
+                ),
+                ProviderConfig(
+                    name="opencode",
+                    type=ProviderType.ANTHROPIC,
+                    priority=2,
+                    base_url="https://api.opencode.com/v1/messages",
+                    api_key="sk-fallback",
+                    models=["wrong-first", "kimi-k2.5"],
+                ),
+            ],
+            router={
+                "model_map": {
+                    "haiku": [
+                        "minimax,MiniMax-M2.7",
+                        "opencode,kimi-k2.5",
+                    ],
+                },
+            },
+        )
+        registry = ProviderRegistry(config)
+        router = RouterEngine(config, registry)
+        app = create_app(config, registry, router)
+        client = TestClient(app)
+
+        main_mock = AsyncMock(
+            side_effect=ProviderHTTPError(status_code=529, body="provider overloaded")
+        )
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            "id": "msg_test",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Hello from configured fallback"}],
+            "model": "kimi-k2.5",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+        fallback_mock = AsyncMock(return_value=mock_response)
+
+        with patch("lccg.server.api.claude_env._load", return_value={}):
+            with patch.object(registry.get_provider("minimax"), "send_request", main_mock):
+                with patch.object(registry.get_provider("opencode"), "send_request", fallback_mock):
+                    response = client.post(
+                        "/v1/messages",
+                        json={
+                            "model": "haiku",
+                            "max_tokens": 100,
+                            "messages": [],
+                            "tools": [{"name": "Agent"}],
+                        },
+                    )
+
+        assert response.status_code == 200
+        fallback_payload = fallback_mock.call_args.args[0]
+        assert fallback_payload["model"] == "kimi-k2.5"
+
+
+class TestRoutingConfigReload:
+    """Tests for routing state updates after config changes."""
+
+    def test_config_update_affects_messages_route_without_restart(self, tmp_path):
+        """Config saved through the API should be used by later /v1/messages requests."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        import httpx
+
+        initial_config = GatewayConfig(
+            providers=[
+                ProviderConfig(
+                    name="old-provider",
+                    type=ProviderType.ANTHROPIC,
+                    base_url="https://api.old.com/v1/messages",
+                    api_key="sk-old",
+                    models=["old-model"],
+                ),
+            ],
+        )
+        registry = ProviderRegistry(initial_config)
+        router = RouterEngine(initial_config, registry)
+        app = create_app(
+            initial_config,
+            registry,
+            router,
+            config_path=str(tmp_path / "config.yaml"),
+        )
+        client = TestClient(app)
+
+        new_config = GatewayConfig(
+            providers=[
+                ProviderConfig(
+                    name="new-provider",
+                    type=ProviderType.ANTHROPIC,
+                    base_url="https://api.new.com/v1/messages",
+                    api_key="sk-new",
+                    models=["new-model"],
+                ),
+            ],
+            router={"model_map": {"haiku": "new-provider,new-model"}},
+        )
+
+        update_response = client.put("/api/config", json=new_config.model_dump(mode="json"))
+        assert update_response.status_code == 200
+
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            "id": "msg_test",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "new config"}],
+            "model": "new-model",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+        send_mock = AsyncMock(return_value=mock_response)
+
+        with patch("lccg.server.api.claude_env._load", return_value={}):
+            with patch.object(app.state.registry.get_provider("new-provider"), "send_request", send_mock):
+                response = client.post(
+                    "/v1/messages",
+                    json={"model": "haiku", "max_tokens": 100, "messages": []},
+                )
+
+        assert response.status_code == 200
+        payload = send_mock.call_args.args[0]
+        assert payload["model"] == "new-model"
+
+
+class TestClaudeEnvModelOverride:
+    """Tests for Claude main-session model override before routing."""
+
+    def test_claude_env_model_override_applies_without_agent_tool(self):
+        """Missing tools should not automatically classify a request as a subagent."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        import httpx
+
+        config = GatewayConfig(
+            providers=[
+                ProviderConfig(
+                    name="minimax",
+                    type=ProviderType.ANTHROPIC,
+                    base_url="https://api.minimax.com/v1/messages",
+                    api_key="sk-main",
+                    models=["MiniMax-M2.7"],
+                ),
+            ],
+            router={"model_map": {"haiku": "minimax,MiniMax-M2.7"}},
+        )
+        registry = ProviderRegistry(config)
+        router = RouterEngine(config, registry)
+        app = create_app(config, registry, router)
+        client = TestClient(app)
+
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            "id": "msg_test",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "env override"}],
+            "model": "MiniMax-M2.7",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+        send_mock = AsyncMock(return_value=mock_response)
+
+        with patch("lccg.server.api.claude_env._load", return_value={"model": "haiku"}):
+            with patch.object(registry.get_provider("minimax"), "send_request", send_mock):
+                response = client.post(
+                    "/v1/messages",
+                    json={"model": "unknown-request-model", "max_tokens": 100, "messages": []},
+                )
+
+        assert response.status_code == 200
+        payload = send_mock.call_args.args[0]
+        assert payload["model"] == "MiniMax-M2.7"

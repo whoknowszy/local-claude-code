@@ -64,6 +64,8 @@ class RouterEngine:
         model_map = self._router.model_map
         if model in model_map:
             route_value = model_map[model]
+            if isinstance(route_value, list) and not route_value:
+                raise ValueError(f"model_map route for {model!r} is empty")
             primary = route_value[0] if isinstance(route_value, list) else route_value
             provider_name, mapped_model = self._parse_route(primary)
             logger.info(

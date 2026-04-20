@@ -110,6 +110,15 @@ class TestRouterEngine:
         assert result.model == "primary-model"
         assert result.scenario == "model_map"
 
+    def test_resolve_model_map_empty_list_raises_value_error(self):
+        """Empty model_map lists are invalid routes, not server errors."""
+        config = _make_config(model_map={"claude-opus-4-6": []})
+        registry = ProviderRegistry(config)
+        router = RouterEngine(config, registry)
+
+        with pytest.raises(ValueError, match="empty"):
+            router.resolve({"model": "claude-opus-4-6"})
+
     def test_resolve_model_map_priority_over_registry(self):
         """model_map takes priority over registry lookup."""
         config = _make_config(
