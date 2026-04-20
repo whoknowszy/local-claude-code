@@ -18,6 +18,31 @@ function Write-Success($msg) { Write-Host "[OK]    $msg" -ForegroundColor Green 
 function Write-Warn($msg) { Write-Host "[WARN]  $msg" -ForegroundColor Yellow }
 function Write-Err($msg) { Write-Host "[ERROR] $msg" -ForegroundColor Red }
 
+function Get-SourceVersion($sourceDir) {
+    $branch = git -C $sourceDir rev-parse --abbrev-ref HEAD
+    $commit = git -C $sourceDir rev-parse --short HEAD
+    $commitTime = git -C $sourceDir log -1 --format='%ci'
+    $subject = git -C $sourceDir log -1 --format='%s'
+    return @{
+        Branch = $branch
+        Commit = $commit
+        CommitTime = $commitTime
+        Subject = $subject
+    }
+}
+
+function Write-SourceVersion($label, $sourceDir) {
+    if (-not (Test-Path (Join-Path $sourceDir ".git"))) {
+        Write-Warn "$label unavailable: $sourceDir is not a Git repository"
+        return
+    }
+
+    $version = Get-SourceVersion $sourceDir
+    Write-Success "$label`: $($version.Branch)@$($version.Commit)"
+    Write-Info "Commit time: $($version.CommitTime)"
+    Write-Info "Commit subject: $($version.Subject)"
+}
+
 function Write-Banner {
     Write-Host ""
     Write-Host "  _   _                       _   _             " -ForegroundColor Cyan
@@ -88,6 +113,7 @@ function Install-Lccg($python) {
     } catch {
         Write-Success "lccg installed"
     }
+    Write-SourceVersion "Source version" $SourceDir
 }
 
 function Create-Config {

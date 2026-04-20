@@ -36,8 +36,18 @@ if (-not $python) {
     exit 1
 }
 
+function Get-SourceVersion($sourceDir) {
+    $branch = git -C $sourceDir rev-parse --abbrev-ref HEAD
+    $commit = git -C $sourceDir rev-parse --short HEAD
+    $commitTime = git -C $sourceDir log -1 --format='%ci'
+    $subject = git -C $sourceDir log -1 --format='%s'
+    return "$branch@$commit  $commitTime  $subject"
+}
+
 Write-Host "[INFO] Updating source checkout: $SourceDir" -ForegroundColor Cyan
+Write-Host "[INFO] Before update: $(Get-SourceVersion $SourceDir)" -ForegroundColor Cyan
 git -C $SourceDir pull --ff-only origin main
+Write-Host "[INFO] After update:  $(Get-SourceVersion $SourceDir)" -ForegroundColor Cyan
 
 Write-Host "[INFO] Reinstalling editable package..." -ForegroundColor Cyan
 & $python -m pip install -e $SourceDir

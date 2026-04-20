@@ -8,6 +8,7 @@ LCCG 现在以 Git 仓库作为本地更新源安装，不再依赖 GitHub Relea
 - Windows PowerShell: `%USERPROFILE%\.lccg\source`
 
 后续只需要运行 `lccg update`，它会在这个源码目录里执行 `git pull --ff-only origin main`，再重新执行 `pip install -e`。
+安装和更新结束时会打印实际源码版本，例如 `main@bb908cd`、提交时间和提交说明。
 
 ## 前提条件
 

@@ -256,6 +256,40 @@ def _run_checked(command: list[str]) -> None:
         raise SystemExit(e.returncode) from e
 
 
+def _git_text(src_dir: Path, *args: str) -> str:
+    """Read one git value from a source checkout."""
+    return subprocess.check_output(
+        ["git", "-C", str(src_dir), *args],
+        text=True,
+        stderr=subprocess.DEVNULL,
+    ).strip()
+
+
+def _get_git_revision(src_dir: Path) -> dict[str, str] | None:
+    """Return human-facing git revision details for a source checkout."""
+    try:
+        return {
+            "branch": _git_text(src_dir, "rev-parse", "--abbrev-ref", "HEAD"),
+            "commit": _git_text(src_dir, "rev-parse", "--short", "HEAD"),
+            "date": _git_text(src_dir, "log", "-1", "--format=%ci"),
+            "subject": _git_text(src_dir, "log", "-1", "--format=%s"),
+        }
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+
+
+def _print_git_revision(label: str, src_dir: Path) -> None:
+    """Print git revision details without failing the main command."""
+    revision = _get_git_revision(src_dir)
+    if revision is None:
+        console.print(f"[yellow]{label}: git revision unavailable[/yellow]")
+        return
+
+    console.print(f"[green]{label}: {revision['branch']}@{revision['commit']}[/green]")
+    console.print(f"  Date:    {revision['date']}")
+    console.print(f"  Subject: {revision['subject']}")
+
+
 @click.group()
 @click.version_option(package_name="lccg")
 def cli() -> None:
@@ -627,7 +661,9 @@ def update() -> None:
         raise SystemExit(1)
 
     console.print(f"[bold]Updating LCCG from:[/bold] {src_dir}")
+    _print_git_revision("Before update", src_dir)
     _run_checked(["git", "-C", str(src_dir), "pull", "--ff-only", "origin", "main"])
+    _print_git_revision("After update", src_dir)
     _run_checked([sys.executable, "-m", "pip", "install", "-e", str(src_dir)])
 
     try:

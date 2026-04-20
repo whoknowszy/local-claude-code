@@ -21,6 +21,24 @@ OS="$(uname -s)"
 PYTHON_CMD=""
 REPO_URL="https://github.com/whoknowszy/local-claude-code.git"
 
+print_source_version() {
+    local src_dir="$1"
+    if [[ ! -d "$src_dir/.git" ]]; then
+        warn "源码版本不可用: $src_dir 不是 Git 仓库"
+        return
+    fi
+
+    local branch commit commit_time subject
+    branch=$(git -C "$src_dir" rev-parse --abbrev-ref HEAD)
+    commit=$(git -C "$src_dir" rev-parse --short HEAD)
+    commit_time=$(git -C "$src_dir" log -1 --format='%ci')
+    subject=$(git -C "$src_dir" log -1 --format='%s')
+
+    success "源码版本: ${branch}@${commit}"
+    info "提交时间: ${commit_time}"
+    info "提交说明: ${subject}"
+}
+
 detect_python() {
     info "检测 Python..."
     if [[ "$OS" == "Darwin" ]]; then
@@ -67,7 +85,7 @@ install_lccg() {
         info "远程执行模式，克隆仓库到 $CLONE_DIR ..."
         if [[ -d "$CLONE_DIR/.git" ]]; then
             info "仓库已存在，拉取最新..."
-            git -C "$CLONE_DIR" pull --ff-only origin main || warn "git pull 失败，使用现有代码继续"
+            git -C "$CLONE_DIR" pull --ff-only origin main
         else
             if [[ -e "$CLONE_DIR" ]]; then
                 error "$CLONE_DIR 已存在但不是 Git 仓库，请先移动或删除该目录后重试"
@@ -88,6 +106,7 @@ install_lccg() {
     local VERSION
     VERSION=$($PYTHON_CMD -c "import importlib.metadata; print(importlib.metadata.version('lccg'))" 2>/dev/null || echo "0.4.0")
     success "lccg v${VERSION} 安装完成"
+    print_source_version "$SRC_DIR"
 }
 
 create_config() {
