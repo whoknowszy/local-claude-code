@@ -23,6 +23,10 @@ _STOP_REASON_MAP = {
     "stop_sequence": "stop_sequence",
 }
 
+_MISSING_REASONING_PLACEHOLDER = (
+    "Reasoning content was not available in the upstream assistant tool-call history."
+)
+
 
 class OpenAIConvertTransformer(BaseTransformer):
     """Converts between Anthropic Messages API and OpenAI Chat Completions formats."""
@@ -104,15 +108,11 @@ class OpenAIConvertTransformer(BaseTransformer):
             elif isinstance(tool_choice, str):
                 result["tool_choice"] = tool_choice
 
-        # Thinking → enable_thinking. Some OpenAI-compatible providers reject
-        # thinking-enabled requests when prior assistant tool calls have no
-        # reasoning_content, which older Anthropic histories often omit.
+        # Thinking → enable_thinking. Moonshot/Kimi requires assistant tool-call
+        # history to include reasoning_content whenever thinking is enabled.
         thinking = anthropic_request.get("thinking")
-        if (
-            thinking
-            and thinking.get("type") == "enabled"
-            and not self._has_tool_call_without_reasoning(messages)
-        ):
+        if thinking and thinking.get("type") == "enabled":
+            self._ensure_tool_call_reasoning_content(messages)
             result["enable_thinking"] = True
             if thinking.get("budget_tokens"):
                 result["reasoning_effort"] = "high"
@@ -129,14 +129,15 @@ class OpenAIConvertTransformer(BaseTransformer):
         return result
 
     @staticmethod
-    def _has_tool_call_without_reasoning(messages: list[dict[str, Any]]) -> bool:
-        """Return true if thinking mode would violate provider tool-call history rules."""
-        return any(
-            msg.get("role") == "assistant"
-            and bool(msg.get("tool_calls"))
-            and not msg.get("reasoning_content")
-            for msg in messages
-        )
+    def _ensure_tool_call_reasoning_content(messages: list[dict[str, Any]]) -> None:
+        """Backfill reasoning_content required by thinking-capable tool-call providers."""
+        for msg in messages:
+            if (
+                msg.get("role") == "assistant"
+                and msg.get("tool_calls")
+                and msg.get("reasoning_content") is None
+            ):
+                msg["reasoning_content"] = _MISSING_REASONING_PLACEHOLDER
 
     def _convert_user_message(self, msg: dict[str, Any], messages: list[dict[str, Any]]) -> None:
         """Convert a user message, handling tool_result and content blocks."""

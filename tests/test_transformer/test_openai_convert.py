@@ -154,7 +154,7 @@ class TestTransformRequest:
         result = self.transformer.transform_request(request)
         assert result["enable_thinking"] is True
 
-    def test_thinking_disabled_when_tool_call_history_lacks_reasoning(self):
+    def test_thinking_backfills_reasoning_content_for_tool_call_history(self):
         request = {
             "model": "kimi-k2.5",
             "max_tokens": 100,
@@ -186,8 +186,9 @@ class TestTransformRequest:
 
         result = self.transformer.transform_request(request)
 
-        assert "enable_thinking" not in result
-        assert "reasoning_effort" not in result
+        assert result["enable_thinking"] is True
+        assert result["reasoning_effort"] == "high"
+        assert result["messages"][0]["reasoning_content"]
 
     def test_metadata_fields_removed(self):
         request = {
