@@ -493,7 +493,7 @@
         {:else}
           <table style="width: 100%; font-size: 12px; border-collapse: collapse; margin-bottom: 4px;">
             <thead>
-              <tr style="background: var(--sidebar-bg);">
+              <tr style="background: var(--border);">
                 <th style="padding: 4px 8px; text-align: left;">别名</th>
                 <th style="padding: 4px 8px; text-align: left;">模式</th>
                 <th style="padding: 4px 8px; text-align: left;">Provider</th>
@@ -694,7 +694,7 @@
         {#if form.models.length > 0}
           <div style="display: flex; flex-wrap: wrap; gap: 4px;">
             {#each form.models as m}
-              <span style="display: inline-flex; align-items: center; gap: 4px; background: var(--sidebar-bg); color: var(--sidebar-active); border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; padding: 2px 8px; font-size: 12px; font-family: monospace;">
+              <span class="model-chip {form.type === 'openai' ? 'chip-openai' : 'chip-anthropic'}" style="display: inline-flex; align-items: center; gap: 4px; border-radius: 4px; padding: 2px 8px; font-size: 12px; font-family: monospace;">
                 {m}
                 <button type="button" onclick={() => { form.models = form.models.filter(x => x !== m) }} style="background: none; border: none; cursor: pointer; color: var(--red); padding: 0; font-size: 14px; line-height: 1;">×</button>
               </span>
