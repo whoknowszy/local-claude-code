@@ -245,3 +245,167 @@ pre {
 }
 
 .empty { text-align: center; padding: 40px; color: var(--sidebar-text); }
+
+/* Provider Cards */
+.provider-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.provider-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  transition: box-shadow 0.15s, border-color 0.15s, opacity 0.2s;
+  position: relative;
+}
+
+.provider-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.08);
+}
+
+.provider-card.dragging {
+  opacity: 0.5;
+  border-style: dashed;
+}
+
+.provider-card.drag-over {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.provider-card.disabled-provider {
+  opacity: 0.45;
+}
+
+.provider-card .drag-handle {
+  cursor: grab;
+  color: var(--sidebar-text);
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.provider-card .drag-handle:active {
+  cursor: grabbing;
+}
+
+.provider-card .drag-handle svg {
+  width: 16px;
+  height: 16px;
+}
+
+.provider-card .card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.provider-card .card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.provider-card .provider-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-h);
+}
+
+.provider-card .card-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--sidebar-text);
+}
+
+.provider-card .model-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: var(--mono);
+  border: 1px solid transparent;
+}
+
+.model-chip.chip-anthropic {
+  background: rgba(249, 115, 22, 0.12);
+  color: #f97316;
+  border-color: rgba(249, 115, 22, 0.2);
+}
+
+.model-chip.chip-openai {
+  background: rgba(16, 185, 129, 0.12);
+  color: #10b981;
+  border-color: rgba(16, 185, 129, 0.2);
+}
+
+/* Health indicator */
+.health-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.health-dot.healthy {
+  background: var(--green);
+  box-shadow: 0 0 4px rgba(34, 197, 94, 0.4);
+}
+
+.health-dot.degraded {
+  background: var(--red);
+  box-shadow: 0 0 4px rgba(239, 68, 68, 0.4);
+  animation: pulse-dot 2s infinite;
+}
+
+.health-dot.recovering {
+  background: var(--yellow);
+  box-shadow: 0 0 4px rgba(245, 158, 11, 0.4);
+  animation: pulse-dot 2s infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.health-label {
+  font-size: 11px;
+  font-weight: 500;
+  margin-left: 4px;
+}
+
+.health-label.healthy { color: var(--green); }
+.health-label.degraded { color: var(--red); }
+.health-label.recovering { color: var(--yellow); }
+
+.provider-card .card-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
+}

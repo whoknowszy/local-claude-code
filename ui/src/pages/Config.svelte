@@ -1,5 +1,6 @@
 <script>
   import { api } from '../api.js'
+  import ProviderCard from '../components/ProviderCard.svelte'
 
   let config = $state(null)
   let error = $state('')
@@ -50,6 +51,13 @@
 
   // 模型标签输入（modal 内）
   let formModelInput = $state('')
+
+  // Health status
+  let healthData = $state(null)
+
+  // Drag-and-drop state
+  let dragIndex = $state(-1)
+  let dropIndex = $state(-1)
 
   function addModel() {
     const m = formModelInput.trim()
@@ -267,6 +275,53 @@
       claudeEnvError = e.message
     }
   }
+
+  async function loadHealth() {
+    try {
+      healthData = await api.getHealth()
+    } catch (e) {
+      // Silently ignore - health is supplementary info
+    }
+  }
+
+  $effect(() => {
+    loadHealth()
+    const timer = setInterval(loadHealth, 5000)
+    return () => clearInterval(timer)
+  })
+
+  function handleDragStart(e, idx) {
+    dragIndex = idx
+  }
+
+  function handleDragOver(e, idx) {
+    dropIndex = idx
+  }
+
+  function handleDrop(e, idx) {
+    if (dragIndex >= 0 && dragIndex !== idx) {
+      reorderProviders(dragIndex, idx)
+    }
+    dragIndex = -1
+    dropIndex = -1
+  }
+
+  function handleDragEnd() {
+    dragIndex = -1
+    dropIndex = -1
+  }
+
+  function reorderProviders(fromIdx, toIdx) {
+    // Work on the original (unsorted) providers array
+    const providers = [...config.providers]
+    const [moved] = providers.splice(fromIdx, 1)
+    providers.splice(toIdx, 0, moved)
+    // Reassign priorities based on new order
+    providers.forEach((p, i) => {
+      p.priority = (i + 1) * 10  // 10, 20, 30, ...
+    })
+    config.providers = providers
+  }
 </script>
 
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
@@ -363,45 +418,25 @@
         {#if config.providers.length === 0}
           <div class="empty">暂无 Provider</div>
         {:else}
-          <table>
-            <thead>
-              <tr>
-                <th>状态</th>
-                <th>名称</th>
-                <th>类型</th>
-                <th>优先级</th>
-                <th>Base URL</th>
-                <th>模型</th>
-                <th>认证</th>
-                {#if editing}<th>操作</th>{/if}
-              </tr>
-            </thead>
-            <tbody>
-              {#each sortedProviders as p}
-                {@const origIdx = config.providers.findIndex(x => x.name === p.name)}
-                <tr style={p.enabled === false ? 'opacity: 0.45;' : ''}>
-                  <td>
-                    <label class="toggle-switch" title={!editing ? '编辑模式才能操作' : (p.enabled !== false ? '停用（排除出路由）' : '启用')}>
-                      <input type="checkbox" checked={p.enabled !== false} disabled={!editing} onchange={() => toggleProvider(origIdx)} />
-                      <span class="toggle-slider"></span>
-                    </label>
-                  </td>
-                  <td><strong>{p.name}</strong></td>
-                  <td><span class="badge badge-blue">{p.type}</span></td>
-                  <td>{p.priority ?? 100}</td>
-                  <td title={p.base_url} style="max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{p.base_url}</td>
-                  <td>{(p.models || []).join(', ')}</td>
-                  <td>{p.auth_scheme}</td>
-                  {#if editing}
-                    <td class="actions">
-                      <button onclick={() => openEdit(origIdx)}>编辑</button>
-                      <button class="btn-danger" onclick={() => removeProvider(origIdx)}>删除</button>
-                    </td>
-                  {/if}
-                </tr>
-              {/each}
-            </tbody>
-          </table>
+          <div class="provider-cards">
+            {#each sortedProviders as p}
+              {@const origIdx = config.providers.findIndex(x => x.name === p.name)}
+              {@const pHealth = healthData?.providers?.[p.name] || null}
+              <ProviderCard
+                provider={p}
+                healthStatus={pHealth}
+                editing={editing}
+                index={origIdx}
+                onedit={() => openEdit(origIdx)}
+                ondelete={() => removeProvider(origIdx)}
+                ontoggle={() => toggleProvider(origIdx)}
+                ondragstart={handleDragStart}
+                ondragover={handleDragOver}
+                ondrop={handleDrop}
+                ondragend={handleDragEnd}
+              />
+            {/each}
+          </div>
         {/if}
       </div>
 
@@ -542,6 +577,35 @@
         {#if editing}
           <button onclick={addModelMapEntry} style="margin-top: 4px;">+ 添加别名映射</button>
         {/if}
+      </div>
+
+      <!-- Degradation config -->
+      <div class="form-group" style="margin-top: 16px;">
+        <label>故障降级配置</label>
+        <div class="form-row">
+          <div class="form-group">
+            <label>失败阈值</label>
+            <input type="number" bind:value={config.router.degradation.failure_threshold} disabled={!editing} min="1" max="100" />
+            <div style="font-size: 11px; color: var(--sidebar-text);">连续失败次数达到此值后降级</div>
+          </div>
+          <div class="form-group">
+            <label>恢复等待（秒）</label>
+            <input type="number" bind:value={config.router.degradation.recovery_seconds} disabled={!editing} min="1" />
+            <div style="font-size: 11px; color: var(--sidebar-text);">降级后等待此时间进入恢复探测</div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>探测间隔（秒）</label>
+            <input type="number" bind:value={config.router.degradation.half_open_interval} disabled={!editing} min="1" />
+            <div style="font-size: 11px; color: var(--sidebar-text);">恢复状态下每次探测的间隔</div>
+          </div>
+          <div class="form-group">
+            <label>探测请求数</label>
+            <input type="number" bind:value={config.router.degradation.half_open_max_requests} disabled={!editing} min="1" max="10" />
+            <div style="font-size: 11px; color: var(--sidebar-text);">每个探测间隔允许的最大请求数</div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
