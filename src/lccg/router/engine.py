@@ -110,6 +110,24 @@ class RouterEngine:
             )
             return RouteResult(provider_name=provider_name, model=model_name)
 
+        # 5. Auto-select highest priority provider
+        if self._providers_config:
+            sorted_providers = sorted(
+                self._providers_config,
+                key=lambda pc: (pc.priority, pc.name),
+            )
+            pc = sorted_providers[0]
+            auto_model = model if model in pc.models else (pc.models[0] if pc.models else model)
+            logger.info(
+                "router.decision",
+                **extras,
+                model=model,
+                route_reason="auto_default",
+                final_provider=pc.name,
+                final_model=auto_model,
+            )
+            return RouteResult(provider_name=pc.name, model=auto_model)
+
         raise ValueError(
             f"Cannot resolve model '{model}': no provider found and no default route configured"
         )
@@ -151,7 +169,7 @@ class RouterEngine:
             key=lambda pc: (pc.priority, pc.name),
         )
         for pc in sorted_providers:
-            if pc.name not in seen:
+            if pc.name not in seen and pc.enabled:
                 # Use the provider's registered model name, not the original model
                 fb_model = model if model in pc.models else (pc.models[0] if pc.models else model)
                 chain.append(

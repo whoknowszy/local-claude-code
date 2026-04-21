@@ -58,13 +58,17 @@ class TestRouterEngine:
         assert result.provider_name == "test-provider"
         assert result.model == "model-1"
 
-    def test_resolve_raises_without_default(self):
+    def test_resolve_auto_default_without_configured_default(self):
+        """When no default is configured, should auto-select highest priority provider."""
         config = _make_config()  # no default
         registry = ProviderRegistry(config)
         router = RouterEngine(config, registry)
 
-        with pytest.raises(ValueError, match="Cannot resolve model"):
-            router.resolve({"model": "unknown-model"})
+        result = router.resolve({"model": "unknown-model"})
+        # Should pick the provider with lowest priority number (both have same priority=0, so alphabetically first)
+        assert result.provider_name == "other-provider"  # alphabetically first after sorting by (priority, name)
+        # When unknown model is not in provider's models, uses provider's first model
+        assert result.model == "other-model"
 
     def test_parse_route(self):
         provider, model = RouterEngine._parse_route("my-provider,my-model")
@@ -264,3 +268,86 @@ class TestRouterEngine:
         # fallback_compat should be last
         assert chain[-1].scenario == "fallback_compat"
         assert chain[-1].provider_name == "extra-provider"
+
+    def test_fallback_chain_disabled_providers_excluded(self):
+        """resolve_fallback_chain should skip providers with enabled=False."""
+        providers = [
+            ProviderConfig(
+                name="primary",
+                type=ProviderType.ANTHROPIC,
+                priority=10,
+                base_url="https://api.primary.com/v1/messages",
+                api_key="sk-p",
+                models=["m1"],
+            ),
+            ProviderConfig(
+                name="disabled-fb",
+                type=ProviderType.ANTHROPIC,
+                priority=20,
+                base_url="https://api.disabled.com/v1/messages",
+                api_key="sk-d",
+                models=["m2"],
+                enabled=False,
+            ),
+            ProviderConfig(
+                name="healthy-fb",
+                type=ProviderType.ANTHROPIC,
+                priority=30,
+                base_url="https://api.healthy.com/v1/messages",
+                api_key="sk-h",
+                models=["m3"],
+            ),
+        ]
+        from lccg.config.schema import GatewayConfig, RouterConfig
+
+        config = GatewayConfig(providers=providers, router=RouterConfig())
+        registry = ProviderRegistry(config)
+        router = RouterEngine(config, registry)
+
+        chain = router.resolve_fallback_chain(model="m1", failed_provider="primary")
+        provider_names = [r.provider_name for r in chain]
+        # Disabled provider should be excluded from fallback chain
+        assert "disabled-fb" not in provider_names
+        assert "healthy-fb" in provider_names
+
+    def test_fallback_chain_model_map_with_multiple_providers(self):
+        """Full model_map list used as fallback chain."""
+        config = _make_config(
+            model_map={
+                "claude-opus-4-6": [
+                    "test-provider,p1",
+                    "other-provider,p2",
+                ],
+            },
+        )
+        registry = ProviderRegistry(config)
+        router = RouterEngine(config, registry)
+
+        chain = router.resolve_fallback_chain(
+            model="claude-opus-4-6", failed_provider="test-provider"
+        )
+        # model_map_fallback entry
+        assert len(chain) >= 1
+        assert chain[0].provider_name == "other-provider"
+        assert chain[0].model == "p2"
+        assert chain[0].scenario == "model_map_fallback"
+
+    def test_fallback_chain_empty_when_only_one_provider(self):
+        """Single provider yields empty fallback chain."""
+        providers = [
+            ProviderConfig(
+                name="only",
+                type=ProviderType.ANTHROPIC,
+                base_url="https://api.only.com/v1/messages",
+                api_key="sk-only",
+                models=["m"],
+            ),
+        ]
+        from lccg.config.schema import GatewayConfig, RouterConfig
+
+        config = GatewayConfig(providers=providers, router=RouterConfig())
+        registry = ProviderRegistry(config)
+        router = RouterEngine(config, registry)
+
+        chain = router.resolve_fallback_chain(model="m", failed_provider="only")
+        assert chain == []
