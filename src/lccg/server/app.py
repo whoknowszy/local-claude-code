@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.metadata
 import json
 import uuid
@@ -17,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 from lccg.config.schema import GatewayConfig
 from lccg.log_config import setup_exception_logger
+from lccg.middleware.client_tracker import ClientTracker
 from lccg.middleware.stats import StatsCollector
 from lccg.provider.base import ProviderHTTPError
 from lccg.provider.health import ProviderHealth
@@ -107,6 +109,15 @@ def _error_response(
     )
 
 
+async def _periodic_cleanup(tracker: ClientTracker, interval: float = 30.0) -> None:
+    """Periodically remove stale clients from the tracker."""
+    while True:
+        await asyncio.sleep(interval)
+        removed = tracker.cleanup_stale()
+        if removed:
+            logger.info("client_tracker.cleanup", removed=removed)
+
+
 def create_app(
     config: GatewayConfig,
     registry: ProviderRegistry,
@@ -121,7 +132,10 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        app.state.client_tracker = ClientTracker()
+        cleanup_task = asyncio.create_task(_periodic_cleanup(app.state.client_tracker))
         yield
+        cleanup_task.cancel()
         await app.state.registry.close_all()
 
     app = FastAPI(title="LCCG", version=importlib.metadata.version("lccg"), lifespan=lifespan)
@@ -357,6 +371,7 @@ def create_app(
             )
 
     # Mount UI API routers
+    from lccg.server.api import clients as clients_api
     from lccg.server.api.claude_env import router as claude_env_router
     from lccg.server.api.config import router as config_router
     from lccg.server.api.health import router as health_router
@@ -370,6 +385,7 @@ def create_app(
     app.include_router(logs_router)
     app.include_router(claude_env_router)
     app.include_router(health_router)
+    app.include_router(clients_api.router)
 
     # Mount UI static files (must be last so API routes take precedence)
     static_dir = Path(__file__).parent / "static"

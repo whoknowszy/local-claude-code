@@ -7,10 +7,13 @@ import json
 import os
 import queue
 import signal
+import socket
 import subprocess
 import sys
+import threading
 import time as _time
 from pathlib import Path
+from typing import Any
 
 import click
 import httpx
@@ -555,6 +558,59 @@ def status(host: str, port: int) -> None:
             )
 
 
+def _register_client(base_url: str, timeout: float = 5) -> dict[str, Any] | None:
+    """Register a client session with the gateway. Returns response dict or None."""
+    try:
+        resp = httpx.post(
+            f"{base_url}/v1/clients/register",
+            json={"pid": os.getpid(), "hostname": socket.gethostname()},
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        return None
+
+
+def _heartbeat_loop(
+    base_url: str, client_id: str, interval: float = 30.0, stop_event: threading.Event | None = None
+) -> None:
+    """Send periodic heartbeats to the gateway until stop_event is set."""
+    if stop_event is None:
+        return
+    while not stop_event.is_set():
+        try:
+            httpx.post(
+                f"{base_url}/v1/clients/{client_id}/heartbeat",
+                timeout=5,
+            )
+        except Exception:
+            pass
+        stop_event.wait(interval)
+
+
+def _deregister_client(base_url: str, client_id: str, timeout: float = 5) -> bool:
+    """Deregister a client session. Returns True on success."""
+    try:
+        resp = httpx.post(
+            f"{base_url}/v1/clients/{client_id}/deregister",
+            timeout=timeout,
+        )
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+def _get_client_count(base_url: str, timeout: float = 5) -> int:
+    """Get the active client count from the gateway."""
+    try:
+        resp = httpx.get(f"{base_url}/v1/clients/count", timeout=timeout)
+        resp.raise_for_status()
+        return resp.json().get("count", 0)
+    except Exception:
+        return -1
+
+
 @cli.command()
 @click.option(
     "-c",
@@ -570,22 +626,22 @@ def code(config_path: str | None, host: str | None, port: int | None) -> None:
     """Start gateway (if needed) and launch Claude Code with proxy env."""
     from lccg.config.loader import load_config
 
-    # 1. 加载配置
+    # 1. Load config
     cfg = load_config(config_path)
 
-    # 检查 providers 是否为空，给出友好提示
+    # Check if providers are empty, give friendly prompt
     if not cfg.providers:
-        click.echo(click.style("⚠ 未配置任何 Provider", fg="yellow", bold=True))
-        click.echo(f"  请编辑配置文件添加 Provider: {config_path or '~/.lccg/config.yaml'}")
+        click.echo(click.style("No providers configured", fg="yellow", bold=True))
+        click.echo(f"  Edit config to add providers: {config_path or '~/.lccg/config.yaml'}")
         click.echo(
-            "  参考示例: https://github.com/whoknowszy/local-claude-code/blob/main/config.example.yaml"
+            "  See example: https://github.com/whoknowszy/local-claude-code/blob/main/config.example.yaml"
         )
         click.echo()
 
     h = host or cfg.server.host
     p = port or cfg.server.port
 
-    # 2. 检测网关
+    # 2. Check gateway
     gateway_proc = None
     we_started = False
     if _is_gateway_running(h, p):
@@ -600,14 +656,33 @@ def code(config_path: str | None, host: str | None, port: int | None) -> None:
         we_started = True
         console.print(f"[green]Gateway started (PID {gateway_proc.pid})[/green]")
 
-    # 3. 构建环境变量（一次性注入，不修改当前 shell）
-    env = os.environ.copy()
     base_url = f"http://{h}:{p}"
+
+    # 3. Register this client with the gateway
+    reg = _register_client(base_url)
+    client_id = reg["client_id"] if reg else None
+    heartbeat_stop = threading.Event()
+    heartbeat_thread = None
+
+    if client_id:
+        console.print(f"[cyan]Client registered: {client_id}[/cyan]")
+        heartbeat_thread = threading.Thread(
+            target=_heartbeat_loop,
+            args=(base_url, client_id, 30.0, heartbeat_stop),
+            daemon=True,
+            name="client-heartbeat",
+        )
+        heartbeat_thread.start()
+    else:
+        console.print("[yellow]Warning: could not register client with gateway[/yellow]")
+
+    # 4. Build environment variables (one-time injection, don't modify current shell)
+    env = os.environ.copy()
     env["ANTHROPIC_BASE_URL"] = base_url
     if "ANTHROPIC_API_KEY" not in env:
         env["ANTHROPIC_API_KEY"] = cfg.server.api_key or "sk-gateway-placeholder"
 
-    # 4. 启动 claude（前台阻塞）
+    # 5. Start claude (foreground blocking)
     console.print(f"[green]Launching Claude Code (ANTHROPIC_BASE_URL={base_url})[/green]")
     try:
         subprocess.run(["claude"], env=env)
@@ -616,16 +691,31 @@ def code(config_path: str | None, host: str | None, port: int | None) -> None:
     except KeyboardInterrupt:
         pass
 
-    # 5. 清理：如果是我们启动的网关，停止它
+    # 6. Stop heartbeat and deregister client
+    if heartbeat_thread is not None:
+        heartbeat_stop.set()
+        heartbeat_thread.join(timeout=3)
+
+    if client_id:
+        _deregister_client(base_url, client_id)
+
+    # 7. Gateway shutdown: reference-counted
     if we_started and gateway_proc is not None:
-        console.print("[yellow]Stopping gateway...[/yellow]")
-        gateway_proc.terminate()
-        try:
-            gateway_proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            gateway_proc.kill()
-        _PID_FILE.unlink(missing_ok=True)
-        console.print("[green]Gateway stopped.[/green]")
+        remaining = _get_client_count(base_url)
+        if remaining <= 0:
+            console.print("[yellow]No more clients. Stopping gateway...[/yellow]")
+            gateway_proc.terminate()
+            try:
+                gateway_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                gateway_proc.kill()
+            _PID_FILE.unlink(missing_ok=True)
+            console.print("[green]Gateway stopped.[/green]")
+        else:
+            console.print(
+                f"[cyan]Gateway still has {remaining} client(s) running."
+                " Leaving it alive.[/cyan]"
+            )
 
 
 @cli.command()
