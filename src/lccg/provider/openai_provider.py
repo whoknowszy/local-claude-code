@@ -16,6 +16,131 @@ from lccg.provider.base import BaseProvider, ProviderHTTPError
 
 logger = structlog.get_logger()
 
+_MISSING_REASONING_PLACEHOLDER = (
+    "Reasoning content was not available in the upstream assistant tool-call history."
+)
+_MISSING_REASONING_ERROR = "thinking is enabled but reasoning_content is missing"
+
+
+def sanitize_reasoning_tool_call_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Ensure thinking requests keep reasoning_content on assistant tool-call messages."""
+    if not (payload.get("enable_thinking") or payload.get("reasoning_effort")):
+        return payload
+
+    messages = payload.get("messages")
+    if not isinstance(messages, list):
+        return payload
+
+    sanitized_messages: list[Any] = []
+    changed = False
+
+    for msg in messages:
+        if (
+            isinstance(msg, dict)
+            and msg.get("role") == "assistant"
+            and msg.get("tool_calls")
+            and not msg.get("reasoning_content")
+        ):
+            reordered: dict[str, Any] = {}
+            for key, value in msg.items():
+                if key == "tool_calls":
+                    reordered["reasoning_content"] = _MISSING_REASONING_PLACEHOLDER
+                if key != "reasoning_content":
+                    reordered[key] = value
+            if "reasoning_content" not in reordered:
+                reordered["reasoning_content"] = _MISSING_REASONING_PLACEHOLDER
+            sanitized_messages.append(reordered)
+            changed = True
+        else:
+            sanitized_messages.append(msg)
+
+    if not changed:
+        return payload
+
+    return {**payload, "messages": sanitized_messages}
+
+
+def is_missing_reasoning_content_error(status_code: int, body: str) -> bool:
+    """Return true for Moonshot/Kimi's thinking + tool-call history validation error."""
+    return status_code == 400 and _MISSING_REASONING_ERROR in body
+
+
+def disable_reasoning_for_retry(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of payload with OpenAI-compatible thinking flags removed."""
+    retry_payload = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"enable_thinking", "reasoning_effort"}
+    }
+    retry_payload["enable_thinking"] = False
+    retry_payload["thinking"] = {"type": "disabled"}
+
+    return collapse_tool_call_history_for_retry(retry_payload)
+
+
+def collapse_tool_call_history_for_retry(payload: dict[str, Any]) -> dict[str, Any]:
+    """Convert prior tool-call history to text so thinking models avoid tool-call validation."""
+    messages = payload.get("messages")
+    if not isinstance(messages, list):
+        return payload
+
+    collapsed_messages: list[Any] = []
+    changed = False
+
+    for msg in messages:
+        if not isinstance(msg, dict):
+            collapsed_messages.append(msg)
+            continue
+
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            parts: list[str] = []
+            content = msg.get("content")
+            if content:
+                parts.append(str(content))
+            parts.append("Tool call history:")
+            for tool_call in msg.get("tool_calls", []):
+                if not isinstance(tool_call, dict):
+                    continue
+                func = tool_call.get("function", {})
+                name = func.get("name", "")
+                arguments = func.get("arguments", "")
+                tool_id = tool_call.get("id", "")
+                parts.append(f"- {name}({arguments}) [id: {tool_id}]")
+
+            collapsed_messages.append({"role": "assistant", "content": "\n".join(parts)})
+            changed = True
+            continue
+
+        if msg.get("role") == "tool":
+            tool_id = msg.get("tool_call_id", "")
+            content = msg.get("content", "")
+            collapsed_messages.append(
+                {
+                    "role": "user",
+                    "content": f"Tool result for {tool_id}:\n{content}",
+                }
+            )
+            changed = True
+            continue
+
+        if "reasoning_content" in msg:
+            collapsed_messages.append(
+                {
+                    key: value
+                    for key, value in msg.items()
+                    if key != "reasoning_content"
+                }
+            )
+            changed = True
+            continue
+
+        collapsed_messages.append(msg)
+
+    if not changed:
+        return payload
+
+    return {**payload, "messages": collapsed_messages}
+
 
 class OpenAIProvider(BaseProvider):
     """Provider for APIs that support the OpenAI Chat Completions format.
@@ -55,6 +180,7 @@ class OpenAIProvider(BaseProvider):
         stream: bool = False,
     ) -> httpx.Response:
         """Send request to OpenAI-compatible API."""
+        payload = sanitize_reasoning_tool_call_payload(payload)
         if stream:
             payload = {**payload, "stream": True}
 
@@ -75,6 +201,22 @@ class OpenAIProvider(BaseProvider):
                 json=payload,
             )
             resp_raw = await response.aread()
+            if is_missing_reasoning_content_error(
+                response.status_code,
+                resp_raw.decode("utf-8", errors="replace"),
+            ):
+                payload = disable_reasoning_for_retry(payload)
+                logger.warning(
+                    "openai_provider.reasoning_retry",
+                    provider=self.name,
+                    url=self._base_url,
+                    reason="upstream rejected thinking tool-call history",
+                )
+                response = await self.client.post(
+                    self._base_url,
+                    json=payload,
+                )
+                resp_raw = await response.aread()
             # Check for HTTP errors and raise ProviderHTTPError for 4XX/5XX
             if response.status_code >= 400:
                 raise ProviderHTTPError(
@@ -133,6 +275,7 @@ class OpenAIProvider(BaseProvider):
         payload: dict[str, Any],
     ) -> AsyncIterator[bytes]:
         """Stream response from OpenAI-compatible API."""
+        payload = sanitize_reasoning_tool_call_payload(payload)
         payload = {**payload, "stream": True}
 
         logger.debug(
@@ -142,6 +285,8 @@ class OpenAIProvider(BaseProvider):
         )
 
         try:
+            retry_payload: dict[str, Any] | None = None
+
             async with self.client.stream(
                 "POST",
                 self._base_url,
@@ -150,14 +295,44 @@ class OpenAIProvider(BaseProvider):
                 # Check for HTTP errors before starting to iterate
                 if response.status_code >= 400:
                     body = await response.aread()
-                    raise ProviderHTTPError(
-                        status_code=response.status_code,
-                        body=body.decode("utf-8", errors="replace")[:500],
-                        headers=dict(response.headers),
-                    )
-                async for chunk in response.aiter_bytes():
-                    if chunk:
-                        yield chunk
+                    body_text = body.decode("utf-8", errors="replace")[:500]
+                    if is_missing_reasoning_content_error(response.status_code, body_text):
+                        retry_payload = disable_reasoning_for_retry(payload)
+                        logger.warning(
+                            "openai_provider.reasoning_retry",
+                            provider=self.name,
+                            url=self._base_url,
+                            reason="upstream rejected thinking tool-call history",
+                            stream=True,
+                        )
+                    else:
+                        raise ProviderHTTPError(
+                            status_code=response.status_code,
+                            body=body_text,
+                            headers=dict(response.headers),
+                        )
+                else:
+                    async for chunk in response.aiter_bytes():
+                        if chunk:
+                            yield chunk
+                    return
+
+            if retry_payload is not None:
+                async with self.client.stream(
+                    "POST",
+                    self._base_url,
+                    json=retry_payload,
+                ) as response:
+                    if response.status_code >= 400:
+                        body = await response.aread()
+                        raise ProviderHTTPError(
+                            status_code=response.status_code,
+                            body=body.decode("utf-8", errors="replace")[:500],
+                            headers=dict(response.headers),
+                        )
+                    async for chunk in response.aiter_bytes():
+                        if chunk:
+                            yield chunk
         except httpx.TimeoutException as e:
             logger.error(
                 "openai_provider.stream_timeout",
