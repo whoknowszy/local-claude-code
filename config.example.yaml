@@ -39,3 +39,10 @@ router:
 
   # 故障回退路由（全局 fallback，优先级最低）
   # fallback: "minimax,MiniMax-M2.7"
+
+  # 故障降级配置
+  degradation:
+    failure_threshold: 3        # 连续失败次数达到此值后降级
+    recovery_seconds: 60        # 降级后等待恢复的时间（秒）
+    half_open_interval: 30       # 半开状态探测间隔（秒）
+    half_open_max_requests: 1    # 半开状态每次探测允许的最大请求数

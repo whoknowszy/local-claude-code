@@ -116,7 +116,7 @@ def create_app(
 ) -> FastAPI:
     """Create and configure the FastAPI application."""
     setup_exception_logger(config.logging.log_dir)
-    health_tracker = ProviderHealth()
+    health_tracker = ProviderHealth(config.router.degradation)
     stats = StatsCollector()
 
     @asynccontextmanager
@@ -251,7 +251,7 @@ def create_app(
                 model=body.get("model", "unknown"),
                 error=str(e),
             )
-            return _error_response(400, "invalid_request_error", str(e), request_id)
+            return _error_response(404, "not_found_error", str(e), request_id)
 
         # Log route resolution for subagent debugging
         logger.info(
@@ -265,19 +265,31 @@ def create_app(
         )
 
         # Check provider health, try fallback if unhealthy
-        if not health_tracker.is_healthy(route.provider_name) and active_config.router.fallback:
-            fb_provider, fb_model = RouterEngine._parse_route(active_config.router.fallback)
-            if fb_provider != route.provider_name:
+        if not health_tracker.is_healthy(route.provider_name):
+            fallback_chain = active_router.resolve_fallback_chain(
+                model=route.model,
+                failed_provider=route.provider_name,
+            )
+            for fb_route in fallback_chain:
+                if health_tracker.is_healthy(fb_route.provider_name):
+                    logger.warning(
+                        "gateway.health_fallback",
+                        request_id=request_id,
+                        original=route.provider_name,
+                        fallback=fb_route.provider_name,
+                    )
+                    route = RouteResult(
+                        provider_name=fb_route.provider_name,
+                        model=fb_route.model,
+                        scenario=route.scenario,
+                    )
+                    break
+            else:
                 logger.warning(
-                    "gateway.health_fallback",
+                    "gateway.health_fallback_none_healthy",
                     request_id=request_id,
                     original=route.provider_name,
-                    fallback=fb_provider,
-                )
-                route = RouteResult(
-                    provider_name=fb_provider,
-                    model=fb_model,
-                    scenario=route.scenario,
+                    chain=[r.provider_name for r in fallback_chain],
                 )
 
         # stats_model must be set after all route modifications are complete
@@ -293,8 +305,8 @@ def create_app(
                 provider=route.provider_name,
             )
             return _error_response(
-                400,
-                "invalid_request_error",
+                404,
+                "not_found_error",
                 f"Provider not found: {route.provider_name}",
                 request_id,
             )
@@ -347,6 +359,7 @@ def create_app(
     # Mount UI API routers
     from lccg.server.api.claude_env import router as claude_env_router
     from lccg.server.api.config import router as config_router
+    from lccg.server.api.health import router as health_router
     from lccg.server.api.logs import router as logs_router
     from lccg.server.api.providers import router as providers_router
     from lccg.server.api.stats import router as stats_router
@@ -356,6 +369,7 @@ def create_app(
     app.include_router(stats_router)
     app.include_router(logs_router)
     app.include_router(claude_env_router)
+    app.include_router(health_router)
 
     # Mount UI static files (must be last so API routes take precedence)
     static_dir = Path(__file__).parent / "static"

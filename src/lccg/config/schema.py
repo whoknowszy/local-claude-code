@@ -38,12 +38,22 @@ class ProviderConfig(BaseModel):
     enabled: bool = True  # False = excluded from routing fallback chain
 
 
+class DegradationConfig(BaseModel):
+    """Configuration for provider health degradation behavior."""
+
+    failure_threshold: int = 3  # Consecutive failures before degradation
+    recovery_seconds: float = 60.0  # Seconds to wait before entering half-open state
+    half_open_interval: float = 30.0  # Seconds between half-open probe requests
+    half_open_max_requests: int = 1  # Max probe requests allowed in half-open state
+
+
 class RouterConfig(BaseModel):
     model_config = {"protected_namespaces": ()}
 
     default: Optional[str] = None
     model_map: dict[str, Union[str, list[str]]] = Field(default_factory=dict)
     fallback: Optional[str] = None  # Global fallback: "provider,model"
+    degradation: DegradationConfig = Field(default_factory=DegradationConfig)
 
 
 class GatewayConfig(BaseModel):

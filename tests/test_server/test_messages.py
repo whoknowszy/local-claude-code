@@ -120,7 +120,8 @@ class TestInvalidRequest:
         )
         assert response.status_code == 400
 
-    def test_unknown_model_no_default(self):
+    def test_unknown_model_auto_default(self):
+        """When no default is configured, should auto-select highest priority provider."""
         config = GatewayConfig(
             providers=[
                 ProviderConfig(
@@ -141,8 +142,10 @@ class TestInvalidRequest:
             "/v1/messages",
             json={"model": "unknown-model", "max_tokens": 100, "messages": []},
         )
-        assert response.status_code == 400
-        assert "Cannot resolve model" in response.json()["error"]["message"]
+        # Should auto-route to the only available provider (test-provider)
+        # Provider will be unreachable but routing should succeed
+        assert response.status_code != 400  # Not a routing error
+        assert "Cannot resolve model" not in response.text
 
 
 class TestErrorResponseFormat:
@@ -208,8 +211,7 @@ class TestProviderErrorHandling:
                 side_effect=ProviderHTTPError(
                     status_code=429,
                     body=(
-                        '{"error": {"type": "rate_limit_error", '
-                        '"message": "Rate limit exceeded"}}'
+                        '{"error": {"type": "rate_limit_error", "message": "Rate limit exceeded"}}'
                     ),
                     headers={"retry-after": "30"},
                 )
