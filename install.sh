@@ -2,6 +2,7 @@
 # LCCG Gateway 一键安装脚本 - macOS / Linux / Git Bash
 # 用法:
 #   一键安装: curl -sL https://raw.githubusercontent.com/whoknowszy/local-claude-code/main/install.sh | bash
+#   wheel 安装: curl -sL https://raw.githubusercontent.com/whoknowszy/local-claude-code/main/install.sh | bash -s -- --wheel
 #   或下载后运行: bash install.sh
 
 set -e
@@ -20,6 +21,33 @@ error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 OS="$(uname -s)"
 PYTHON_CMD=""
 REPO_URL="https://github.com/whoknowszy/local-claude-code.git"
+RELEASE_API_URL="https://api.github.com/repos/whoknowszy/local-claude-code/releases/latest"
+INSTALL_MODE="${LCCG_INSTALL_MODE:-source}"
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --wheel)
+                INSTALL_MODE="wheel"
+                shift
+                ;;
+            --source)
+                INSTALL_MODE="source"
+                shift
+                ;;
+            -h|--help)
+                echo "Usage: install.sh [--source|--wheel]"
+                echo "  --source  clone ~/.lccg/source and install editable package (default)"
+                echo "  --wheel   install release wheel without cloning source"
+                exit 0
+                ;;
+            *)
+                error "未知参数: $1"
+                exit 1
+                ;;
+        esac
+    done
+}
 
 print_source_version() {
     local src_dir="$1"
@@ -68,6 +96,72 @@ detect_python() {
 }
 
 install_lccg() {
+    if [[ "$INSTALL_MODE" == "wheel" ]]; then
+        install_lccg_wheel
+    elif [[ "$INSTALL_MODE" == "source" ]]; then
+        install_lccg_source
+    else
+        error "未知安装模式: $INSTALL_MODE，请使用 --source 或 --wheel"
+        exit 1
+    fi
+}
+
+install_lccg_wheel() {
+    local VERSION WHEEL_URL wheel_url
+    VERSION="${LCCG_VERSION:-latest}"
+
+    if [[ -n "${LCCG_WHEEL_URL:-}" ]]; then
+        WHEEL_URL="$LCCG_WHEEL_URL"
+    elif [[ "$VERSION" == "latest" ]]; then
+        WHEEL_URL="$(resolve_latest_wheel_url)" || {
+            error "未找到 latest release wheel，请确认 GitHub Release 已发布 wheel，或设置 LCCG_WHEEL_URL"
+            exit 1
+        }
+    else
+        WHEEL_URL="https://github.com/whoknowszy/local-claude-code/releases/download/v${VERSION}/lccg-${VERSION}-py3-none-any.whl"
+    fi
+    wheel_url="$WHEEL_URL"
+
+    info "使用 wheel 安装 lccg: $wheel_url"
+    $PYTHON_CMD -m pip install --upgrade "$wheel_url" || {
+        error "wheel 安装失败，请确认 release wheel 已发布，或改用源码安装: bash install.sh --source"
+        exit 1
+    }
+
+    local INSTALLED_VERSION
+    INSTALLED_VERSION=$($PYTHON_CMD -c "import importlib.metadata; print(importlib.metadata.version('lccg'))" 2>/dev/null || echo "unknown")
+    success "lccg v${INSTALLED_VERSION} wheel 安装完成"
+}
+
+resolve_latest_wheel_url() {
+    $PYTHON_CMD - "$RELEASE_API_URL" <<'PY'
+import json
+import sys
+import urllib.request
+
+api_url = sys.argv[1]
+request = urllib.request.Request(
+    api_url,
+    headers={
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "lccg-installer",
+    },
+)
+
+with urllib.request.urlopen(request, timeout=30) as response:
+    release = json.load(response)
+
+for asset in release.get("assets", []):
+    name = asset.get("name", "")
+    if name.startswith("lccg-") and name.endswith("-py3-none-any.whl"):
+        print(asset["browser_download_url"])
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+install_lccg_source() {
     if ! command -v git &>/dev/null; then
         error "未找到 Git，请先安装 Git 后重试"
         if [[ "$OS" == "Darwin" ]]; then
@@ -104,7 +198,7 @@ install_lccg() {
 
     # 提取版本号用于显示
     local VERSION
-    VERSION=$($PYTHON_CMD -c "import importlib.metadata; print(importlib.metadata.version('lccg'))" 2>/dev/null || echo "0.4.0")
+    VERSION=$($PYTHON_CMD -c "import importlib.metadata; print(importlib.metadata.version('lccg'))" 2>/dev/null || echo "0.5.0")
     success "lccg v${VERSION} 安装完成"
     print_source_version "$SRC_DIR"
 }
@@ -230,8 +324,8 @@ EOF
 }
 
 print_banner() {
-    INSTALL_VERSION="v0.4.0"
-    INSTALL_VERSION=$(lccg --version 2>/dev/null | sed 's/.*v\?/v/' || echo "v0.4.0")
+    INSTALL_VERSION="v0.5.0"
+    INSTALL_VERSION=$(lccg --version 2>/dev/null | sed 's/.*v\?/v/' || echo "v0.5.0")
     echo ""
     echo -e "${CYAN}  _   _                       _   _             "
     echo -e " | \\ | | _____      _____ _ __| | | | ___  _   _ "
@@ -244,6 +338,7 @@ print_banner() {
 }
 
 main() {
+    parse_args "$@"
     print_banner
     detect_python
     install_lccg
@@ -280,4 +375,4 @@ main() {
     echo ""
 }
 
-main
+main "$@"

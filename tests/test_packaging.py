@@ -32,6 +32,7 @@ def test_pyproject_metadata():
     assert re.match(r"^\d+\.\d+\.\d+$", version), (
         f"version '{version}' does not match semver pattern"
     )
+    assert version == "0.5.0"
 
     # Check project.scripts entry
     scripts_match = re.search(r'^lccg\s*=\s*"([^"]+)"', content, flags=re.MULTILINE)
@@ -42,19 +43,40 @@ def test_pyproject_metadata():
 
 
 def test_installers_use_local_source_checkout():
-    """Installers should leave users with a local repo checkout that can be updated later."""
+    """Default installer path should still support a local repo checkout."""
     unix_installer = read_repo_file("install.sh")
     windows_installer = read_repo_file("install.ps1")
 
     assert "$HOME/.lccg/source" in unix_installer
+    assert "INSTALL_MODE" in unix_installer
     assert "git clone" in unix_installer
     assert "git -C" in unix_installer
     assert 'pip install -e "$SRC_DIR"' in unix_installer
 
     assert ".lccg\\source" in windows_installer
+    assert "InstallMode" in windows_installer
     assert "git clone" in windows_installer
     assert "git -C" in windows_installer
     assert "-m pip install -e" in windows_installer
+
+
+def test_installers_support_wheel_install_path():
+    """Installers should expose a wheel install path without requiring a source checkout."""
+    unix_installer = read_repo_file("install.sh")
+    windows_installer = read_repo_file("install.ps1")
+
+    assert "--wheel" in unix_installer
+    assert "LCCG_WHEEL_URL" in unix_installer
+    assert "api.github.com/repos/whoknowszy/local-claude-code/releases/latest" in unix_installer
+    assert "releases/download" in unix_installer
+    assert "pip install --upgrade \"$wheel_url\"" in unix_installer
+
+    assert "InstallMode" in windows_installer
+    assert "wheel" in windows_installer
+    assert "LCCG_WHEEL_URL" in windows_installer
+    assert "api.github.com/repos/whoknowszy/local-claude-code/releases/latest" in windows_installer
+    assert "releases/download" in windows_installer
+    assert "-m pip install --upgrade $wheelUrl" in windows_installer
 
 
 def test_installers_report_installed_git_revision():
@@ -106,7 +128,23 @@ def test_install_docs_describe_repository_update_flow():
 
     assert "lccg update" in install_doc
     assert "~/.lccg/source" in install_doc
+    assert "--wheel" in install_doc
+    assert "pip install --upgrade" in install_doc
     assert "git+https://" not in install_doc
+
+
+def test_release_workflow_builds_and_uploads_wheel():
+    workflow = read_repo_file(".github/workflows/release-wheel.yml")
+
+    assert "on:" in workflow
+    assert "tags:" in workflow
+    assert "v*" in workflow
+    assert "tag_name" in workflow
+    assert "python -m build --wheel" in workflow
+    assert "gh release upload" in workflow
+    assert "dist/*.whl" in workflow
+    assert "RELEASE_TAG" in workflow
+    assert "GITHUB_TOKEN" in workflow
 
 
 def test_cli_exposes_update_command():

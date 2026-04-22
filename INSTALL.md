@@ -1,14 +1,19 @@
 # 安装与更新
 
-LCCG 现在以 Git 仓库作为本地更新源安装，不再依赖 GitHub Release、pyz 包、pipx 或 uv tool。
+LCCG 支持两种安装路径：
 
-安装脚本会把源码克隆到固定目录，然后用 editable install 安装 Python 命令：
+1. 源码安装：把 Git 仓库克隆到固定目录，然后用 editable install 安装 Python 命令。
+2. wheel 安装：直接从 GitHub Release wheel 安装，不克隆源码。
+
+默认仍然使用源码安装，便于本地更新和调试：
 
 - macOS / Linux / Git Bash: `~/.lccg/source`
 - Windows PowerShell: `%USERPROFILE%\.lccg\source`
 
 后续只需要运行 `lccg update`，它会在这个源码目录里执行 `git pull --ff-only origin main`，再重新执行 `pip install -e`。
 安装和更新结束时会打印实际源码版本，例如 `main@bb908cd`、提交时间和提交说明。
+
+wheel 安装适合不想保留源码目录的用户。它依赖项目已发布 GitHub Release wheel，升级方式是重新运行 wheel 安装命令，或手动执行 `pip install --upgrade <wheel-url>`。
 
 ## 前提条件
 
@@ -22,6 +27,19 @@ LCCG 现在以 Git 仓库作为本地更新源安装，不再依赖 GitHub Relea
 
 ```bash
 curl -sL https://raw.githubusercontent.com/whoknowszy/local-claude-code/main/install.sh | bash
+```
+
+wheel 安装：
+
+```bash
+curl -sL https://raw.githubusercontent.com/whoknowszy/local-claude-code/main/install.sh | bash -s -- --wheel
+```
+
+指定 wheel URL：
+
+```bash
+LCCG_WHEEL_URL=https://github.com/whoknowszy/local-claude-code/releases/download/v0.5.0/lccg-0.5.0-py3-none-any.whl \
+  bash install.sh --wheel
 ```
 
 本地仓库安装：
@@ -50,6 +68,20 @@ PowerShell 一键安装：
 
 ```powershell
 irm https://raw.githubusercontent.com/whoknowszy/local-claude-code/main/install.ps1 | iex
+```
+
+wheel 安装：
+
+```powershell
+irm https://raw.githubusercontent.com/whoknowszy/local-claude-code/main/install.ps1 -OutFile install.ps1
+.\install.ps1 -InstallMode wheel
+```
+
+指定 wheel URL：
+
+```powershell
+$env:LCCG_WHEEL_URL = "https://github.com/whoknowszy/local-claude-code/releases/download/v0.5.0/lccg-0.5.0-py3-none-any.whl"
+.\install.ps1 -InstallMode wheel
 ```
 
 本地仓库安装：

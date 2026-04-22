@@ -4,7 +4,9 @@
 #   or run locally: .\install.ps1
 
 param(
-    [switch]$SkipPythonCheck
+    [switch]$SkipPythonCheck,
+    [ValidateSet("source", "wheel")]
+    [string]$InstallMode = $(if ($env:LCCG_INSTALL_MODE) { $env:LCCG_INSTALL_MODE } else { "source" })
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,6 +14,7 @@ $ProgressPreference = "SilentlyContinue"
 
 $RepoUrl = "https://github.com/whoknowszy/local-claude-code.git"
 $SourceDir = Join-Path $HOME ".lccg\source"
+$ReleaseApiUrl = "https://api.github.com/repos/whoknowszy/local-claude-code/releases/latest"
 
 function Write-Info($msg) { Write-Host "[INFO]  $msg" -ForegroundColor Cyan }
 function Write-Success($msg) { Write-Host "[OK]    $msg" -ForegroundColor Green }
@@ -81,6 +84,63 @@ function Ensure-Git {
 }
 
 function Install-Lccg($python) {
+    if ($InstallMode -eq "wheel") {
+        Install-LccgWheel $python
+        return
+    }
+
+    if ($InstallMode -ne "source") {
+        Write-Err "Unknown install mode: $InstallMode. Use 'source' or 'wheel'."
+        exit 1
+    }
+
+    Install-LccgSource $python
+}
+
+function Install-LccgWheel($python) {
+    $version = if ($env:LCCG_VERSION) { $env:LCCG_VERSION } else { "latest" }
+    if ($env:LCCG_WHEEL_URL) {
+        $wheelUrl = $env:LCCG_WHEEL_URL
+    } elseif ($version -eq "latest") {
+        $wheelUrl = Resolve-LatestWheelUrl
+    } else {
+        $wheelUrl = "https://github.com/whoknowszy/local-claude-code/releases/download/v$version/lccg-$version-py3-none-any.whl"
+    }
+
+    Write-Info "Installing lccg from wheel: $wheelUrl"
+    & $python -m pip install --upgrade $wheelUrl
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "Wheel install failed. Confirm the release wheel exists, or use: .\install.ps1 -InstallMode source"
+        exit 1
+    }
+
+    try {
+        $installedVersion = & $python -c "import importlib.metadata; print(importlib.metadata.version('lccg'))" 2>$null
+        Write-Success "lccg v$installedVersion installed from wheel"
+    } catch {
+        Write-Success "lccg installed from wheel"
+    }
+}
+
+function Resolve-LatestWheelUrl {
+    $headers = @{
+        Accept = "application/vnd.github+json"
+        "User-Agent" = "lccg-installer"
+    }
+    $release = Invoke-RestMethod -Uri $ReleaseApiUrl -Headers $headers
+    $asset = $release.assets |
+        Where-Object { $_.name -like "lccg-*-py3-none-any.whl" } |
+        Select-Object -First 1
+
+    if (-not $asset) {
+        Write-Err "No latest release wheel found. Confirm the GitHub Release has a wheel asset, or set LCCG_WHEEL_URL."
+        exit 1
+    }
+
+    return $asset.browser_download_url
+}
+
+function Install-LccgSource($python) {
     Ensure-Git
 
     $sourceParent = Split-Path -Parent $SourceDir
