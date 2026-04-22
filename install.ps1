@@ -14,7 +14,7 @@ $ProgressPreference = "SilentlyContinue"
 
 $RepoUrl = "https://github.com/whoknowszy/local-claude-code.git"
 $SourceDir = Join-Path $HOME ".lccg\source"
-$ReleaseApiUrl = "https://api.github.com/repos/whoknowszy/local-claude-code/releases/latest"
+$ReleasesApiUrl = "https://api.github.com/repos/whoknowszy/local-claude-code/releases?per_page=100"
 
 function Write-Info($msg) { Write-Host "[INFO]  $msg" -ForegroundColor Cyan }
 function Write-Success($msg) { Write-Host "[OK]    $msg" -ForegroundColor Green }
@@ -127,9 +127,18 @@ function Resolve-LatestWheelUrl {
         Accept = "application/vnd.github+json"
         "User-Agent" = "lccg-installer"
     }
-    $release = Invoke-RestMethod -Uri $ReleaseApiUrl -Headers $headers
-    $asset = $release.assets |
-        Where-Object { $_.name -like "lccg-*-py3-none-any.whl" } |
+    $releases = Invoke-RestMethod -Uri $ReleasesApiUrl -Headers $headers
+    $asset = $releases |
+        Where-Object { -not $_.draft -and -not $_.prerelease } |
+        ForEach-Object { $_.assets } |
+        Where-Object { $_.name -match '^lccg-(\d+\.\d+\.\d+)-py3-none-any\.whl$' } |
+        ForEach-Object {
+            [PSCustomObject]@{
+                Asset = $_
+                VersionTuple = [version]$Matches[1]
+            }
+        } |
+        Sort-Object -Property VersionTuple -Descending |
         Select-Object -First 1
 
     if (-not $asset) {
@@ -137,7 +146,7 @@ function Resolve-LatestWheelUrl {
         exit 1
     }
 
-    return $asset.browser_download_url
+    return $asset.Asset.browser_download_url
 }
 
 function Install-LccgSource($python) {

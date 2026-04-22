@@ -13,7 +13,7 @@ LCCG 支持两种安装路径：
 后续只需要运行 `lccg update`，它会在这个源码目录里执行 `git pull --ff-only origin main`，再重新执行 `pip install -e`。
 安装和更新结束时会打印实际源码版本，例如 `main@bb908cd`、提交时间和提交说明。
 
-wheel 安装适合不想保留源码目录的用户。它依赖项目已发布 GitHub Release wheel，升级方式是重新运行 wheel 安装命令，或手动执行 `pip install --upgrade <wheel-url>`。
+wheel 安装适合不想保留源码目录的用户。它依赖项目已发布 GitHub Release wheel，默认会自动选择最高稳定版本的 wheel；升级方式是重新运行 wheel 安装命令，或手动执行 `pip install --upgrade <wheel-url>`。
 
 ## 前提条件
 
@@ -71,6 +71,12 @@ irm https://raw.githubusercontent.com/whoknowszy/local-claude-code/main/install.
 ```
 
 wheel 安装：
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/whoknowszy/local-claude-code/main/install.ps1))) -InstallMode wheel
+```
+
+如果公司网络或执行策略不允许远程脚本直接执行，可以先下载再运行：
 
 ```powershell
 irm https://raw.githubusercontent.com/whoknowszy/local-claude-code/main/install.ps1 -OutFile install.ps1

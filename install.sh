@@ -21,7 +21,7 @@ error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 OS="$(uname -s)"
 PYTHON_CMD=""
 REPO_URL="https://github.com/whoknowszy/local-claude-code.git"
-RELEASE_API_URL="https://api.github.com/repos/whoknowszy/local-claude-code/releases/latest"
+RELEASES_API_URL="https://api.github.com/repos/whoknowszy/local-claude-code/releases?per_page=100"
 INSTALL_MODE="${LCCG_INSTALL_MODE:-source}"
 
 parse_args() {
@@ -154,8 +154,9 @@ install_lccg_wheel() {
 }
 
 resolve_latest_wheel_url() {
-    $PYTHON_CMD - "$RELEASE_API_URL" <<'PY'
+    $PYTHON_CMD - "$RELEASES_API_URL" <<'PY'
 import json
+import re
 import sys
 import urllib.request
 
@@ -169,13 +170,29 @@ request = urllib.request.Request(
 )
 
 with urllib.request.urlopen(request, timeout=30) as response:
-    release = json.load(response)
+    releases = json.load(response)
 
-for asset in release.get("assets", []):
-    name = asset.get("name", "")
-    if name.startswith("lccg-") and name.endswith("-py3-none-any.whl"):
-        print(asset["browser_download_url"])
-        raise SystemExit(0)
+def version_tuple(version):
+    return tuple(int(part) for part in version.split("."))
+
+best_version = None
+best_asset = None
+for release in releases:
+    if release.get("draft") or release.get("prerelease"):
+        continue
+    for asset in release.get("assets", []):
+        name = asset.get("name", "")
+        match = re.fullmatch(r"lccg-(\d+\.\d+\.\d+)-py3-none-any\.whl", name)
+        if not match:
+            continue
+        current = version_tuple(match.group(1))
+        if best_version is None or current > best_version:
+            best_version = current
+            best_asset = asset
+
+if best_asset:
+    print(best_asset["browser_download_url"])
+    raise SystemExit(0)
 
 raise SystemExit(1)
 PY

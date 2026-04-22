@@ -73,11 +73,14 @@ def test_installers_support_wheel_install_path():
     """Installers should expose a wheel install path without requiring a source checkout."""
     unix_installer = read_repo_file("install.sh")
     windows_installer = read_repo_file("install.ps1")
+    releases_api = "api.github.com/repos/whoknowszy/local-claude-code/releases?per_page=100"
 
     assert "--wheel" in unix_installer
     assert "LCCG_WHEEL_URL" in unix_installer
-    assert "api.github.com/repos/whoknowszy/local-claude-code/releases/latest" in unix_installer
+    assert releases_api in unix_installer
     assert "releases/download" in unix_installer
+    assert "version_tuple" in unix_installer
+    assert "best_asset" in unix_installer
     assert "pip install --upgrade \"$wheel_url\"" in unix_installer
     assert "install_lccg_command_shim" in unix_installer
     assert 'exec "$PYTHON_EXE" -m lccg "\\$@"' in unix_installer
@@ -87,8 +90,10 @@ def test_installers_support_wheel_install_path():
     assert "InstallMode" in windows_installer
     assert "wheel" in windows_installer
     assert "LCCG_WHEEL_URL" in windows_installer
-    assert "api.github.com/repos/whoknowszy/local-claude-code/releases/latest" in windows_installer
+    assert releases_api in windows_installer
     assert "releases/download" in windows_installer
+    assert "Sort-Object -Property VersionTuple -Descending" in windows_installer
+    assert "VersionTuple" in windows_installer
     assert "-m pip install --upgrade $wheelUrl" in windows_installer
 
 
