@@ -10,6 +10,8 @@
     ondragover = () => {},
     ondragend = () => {},
     ondrop = () => {},
+    dragPosition = null,
+    isDropTarget = false,
     index = 0,
   } = $props()
 
@@ -28,15 +30,40 @@
     if (status === 'recovering') return '恢复中'
     return '正常'
   }
+
+  function getDropPosition(event) {
+    const rect = event.currentTarget.getBoundingClientRect()
+    return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+  }
+
+  function handleDragStart(event) {
+    isDragging = true
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', provider.name)
+    ondragstart(event, provider.name)
+  }
+
+  function handleDragOver(event) {
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    ondragover(event, provider.name, getDropPosition(event))
+  }
+
+  function handleDrop(event) {
+    event.preventDefault()
+    ondrop(event, provider.name, getDropPosition(event))
+  }
 </script>
 
 <div
-  class="provider-card {provider.enabled === false ? 'disabled-provider' : ''} {isDragging ? 'dragging' : ''}"
+  class="provider-card {provider.enabled === false ? 'disabled-provider' : ''} {isDragging ? 'dragging' : ''} {isDropTarget && dragPosition === 'before' ? 'drop-before' : ''} {isDropTarget && dragPosition === 'after' ? 'drop-after' : ''}"
+  role="listitem"
+  aria-label={`${provider.name} provider`}
   draggable={editing}
-  ondragstart={(e) => { isDragging = true; e.dataTransfer.setData('text/plain', String(index)); ondragstart(e, index) }}
-  ondragover={(e) => { e.preventDefault(); ondragover(e, index) }}
+  ondragstart={handleDragStart}
+  ondragover={handleDragOver}
   ondragend={() => { isDragging = false; ondragend() }}
-  ondrop={(e) => { e.preventDefault(); ondrop(e, index) }}
+  ondrop={handleDrop}
 >
   {#if editing}
     <div class="drag-handle" title="拖拽排序">

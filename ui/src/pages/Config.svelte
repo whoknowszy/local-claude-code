@@ -56,8 +56,9 @@
   let healthData = $state(null)
 
   // Drag-and-drop state
-  let dragIndex = $state(-1)
-  let dropIndex = $state(-1)
+  let dragProviderName = $state('')
+  let dropProviderName = $state('')
+  let dropPosition = $state(null)
 
   function addModel() {
     const m = formModelInput.trim()
@@ -290,37 +291,54 @@
     return () => clearInterval(timer)
   })
 
-  function handleDragStart(e, idx) {
-    dragIndex = idx
+  function handleDragStart(e, providerName) {
+    dragProviderName = providerName
+    dropProviderName = ''
+    dropPosition = null
   }
 
-  function handleDragOver(e, idx) {
-    dropIndex = idx
-  }
-
-  function handleDrop(e, idx) {
-    if (dragIndex >= 0 && dragIndex !== idx) {
-      reorderProviders(dragIndex, idx)
+  function handleDragOver(e, providerName, position) {
+    if (!dragProviderName || providerName === dragProviderName) {
+      dropProviderName = ''
+      dropPosition = null
+      return
     }
-    dragIndex = -1
-    dropIndex = -1
+    dropProviderName = providerName
+    dropPosition = position
+  }
+
+  function handleDrop(e, providerName, position) {
+    if (dragProviderName && dragProviderName !== providerName) {
+      reorderProviders(dragProviderName, providerName, position)
+    }
+    dragProviderName = ''
+    dropProviderName = ''
+    dropPosition = null
   }
 
   function handleDragEnd() {
-    dragIndex = -1
-    dropIndex = -1
+    dragProviderName = ''
+    dropProviderName = ''
+    dropPosition = null
   }
 
-  function reorderProviders(fromIdx, toIdx) {
-    // Work on the original (unsorted) providers array
-    const providers = [...config.providers]
-    const [moved] = providers.splice(fromIdx, 1)
-    providers.splice(toIdx, 0, moved)
-    // Reassign priorities based on new order
-    providers.forEach((p, i) => {
-      p.priority = (i + 1) * 10  // 10, 20, 30, ...
-    })
-    config.providers = providers
+  function reorderProviders(dragName, targetName, position) {
+    const providersByName = new Map((config.providers || []).map(p => [p.name, p]))
+    const ordered = sortedProviders.filter(p => p.name !== dragName)
+    const moved = providersByName.get(dragName)
+    if (!moved) return
+
+    const targetIdx = ordered.findIndex(p => p.name === targetName)
+    if (targetIdx < 0) return
+
+    const insertIdx = position === 'after' ? targetIdx + 1 : targetIdx
+    ordered.splice(insertIdx, 0, moved)
+
+    const reordered = ordered.map((p, i) => ({
+      ...providersByName.get(p.name),
+      priority: (i + 1) * 10,  // 10, 20, 30, ...
+    }))
+    config.providers = reordered
   }
 </script>
 
@@ -418,7 +436,7 @@
         {#if config.providers.length === 0}
           <div class="empty">暂无 Provider</div>
         {:else}
-          <div class="provider-cards">
+          <div class="provider-cards" role="list">
             {#each sortedProviders as p}
               {@const origIdx = config.providers.findIndex(x => x.name === p.name)}
               {@const pHealth = healthData?.providers?.[p.name] || null}
@@ -434,6 +452,8 @@
                 ondragover={handleDragOver}
                 ondrop={handleDrop}
                 ondragend={handleDragEnd}
+                isDropTarget={dropProviderName === p.name}
+                dragPosition={dropProviderName === p.name ? dropPosition : null}
               />
             {/each}
           </div>
