@@ -79,6 +79,8 @@ def test_installers_support_wheel_install_path():
     assert "api.github.com/repos/whoknowszy/local-claude-code/releases/latest" in unix_installer
     assert "releases/download" in unix_installer
     assert "pip install --upgrade \"$wheel_url\"" in unix_installer
+    assert "install_lccg_command_shim" in unix_installer
+    assert 'exec "$PYTHON_EXE" -m lccg "\\$@"' in unix_installer
     assert "$PYTHON_CMD -m lccg --version" in unix_installer
     assert "lccg --version 2>/dev/null | sed" not in unix_installer
 

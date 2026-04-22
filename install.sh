@@ -104,6 +104,26 @@ install_lccg() {
         error "未知安装模式: $INSTALL_MODE，请使用 --source 或 --wheel"
         exit 1
     fi
+
+    install_lccg_command_shim
+}
+
+install_lccg_command_shim() {
+    local LOCAL_BIN="$HOME/.local/bin"
+    local SHIM="$LOCAL_BIN/lccg"
+    local PYTHON_EXE
+
+    PYTHON_EXE=$($PYTHON_CMD -c 'import sys; print(sys.executable)')
+    mkdir -p "$LOCAL_BIN"
+    if [[ -e "$SHIM" || -L "$SHIM" ]]; then
+        rm -f "$SHIM"
+    fi
+    cat > "$SHIM" << EOF
+#!/usr/bin/env bash
+exec "$PYTHON_EXE" -m lccg "\$@"
+EOF
+    chmod +x "$SHIM"
+    success "lccg 命令入口已更新: $SHIM"
 }
 
 install_lccg_wheel() {
