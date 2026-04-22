@@ -324,8 +324,6 @@ EOF
 }
 
 print_banner() {
-    INSTALL_VERSION="v0.5.0"
-    INSTALL_VERSION=$(lccg --version 2>/dev/null | sed 's/.*v\?/v/' || echo "v0.5.0")
     echo ""
     echo -e "${CYAN}  _   _                       _   _             "
     echo -e " | \\ | | _____      _____ _ __| | | | ___  _   _ "
@@ -333,7 +331,7 @@ print_banner() {
     echo -e " |_|\\  |  __/\\ V  V /  (__| |  |  _  | (_) | |_| |"
     echo -e "   |__/\\___| \\_/\\\_/ \\___|_|  |_| |_|\\___/ \\__, |"
     echo -e "                                            |___/  "
-    echo -e "${NC}Local Claude Code Gateway  ${INSTALL_VERSION}"
+    echo -e "${NC}Local Claude Code Gateway"
     echo ""
 }
 
@@ -348,8 +346,11 @@ main() {
 
     # 验证安装
     info "验证安装..."
-    if command -v lccg &>/dev/null; then
-        success "验证通过: $(lccg --version 2>/dev/null || echo 'lccg 已安装')"
+    local VERIFY_VERSION
+    if VERIFY_VERSION=$($PYTHON_CMD -m lccg --version 2>/dev/null); then
+        success "验证通过: ${VERIFY_VERSION}"
+    elif command -v lccg &>/dev/null; then
+        success "lccg 命令可用: $(command -v lccg)"
     else
         warn "lccg 已安装到 $HOME/.local/bin/lccg，但不在当前 PATH 中"
         warn "请运行: export PATH=\"\$HOME/.local/bin:\$PATH\""

@@ -1,3 +1,8 @@
 """LCCG - Local Claude Code Gateway."""
 
-__version__ = "0.4.0"
+import importlib.metadata
+
+try:
+    __version__ = importlib.metadata.version("lccg")
+except importlib.metadata.PackageNotFoundError:
+    __version__ = "0+unknown"

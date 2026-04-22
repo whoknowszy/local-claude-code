@@ -42,6 +42,15 @@ def test_pyproject_metadata():
     )
 
 
+def test_package_module_version_uses_installed_metadata():
+    """Package __version__ should not drift from wheel metadata."""
+    init_file = read_repo_file("src/lccg/__init__.py")
+
+    assert "importlib.metadata" in init_file
+    assert "__version__ = \"0.4.0\"" not in init_file
+    assert "__version__ = \"0.5.0\"" not in init_file
+
+
 def test_installers_use_local_source_checkout():
     """Default installer path should still support a local repo checkout."""
     unix_installer = read_repo_file("install.sh")
@@ -70,6 +79,8 @@ def test_installers_support_wheel_install_path():
     assert "api.github.com/repos/whoknowszy/local-claude-code/releases/latest" in unix_installer
     assert "releases/download" in unix_installer
     assert "pip install --upgrade \"$wheel_url\"" in unix_installer
+    assert "$PYTHON_CMD -m lccg --version" in unix_installer
+    assert "lccg --version 2>/dev/null | sed" not in unix_installer
 
     assert "InstallMode" in windows_installer
     assert "wheel" in windows_installer
@@ -140,6 +151,9 @@ def test_release_workflow_builds_and_uploads_wheel():
     assert "tags:" in workflow
     assert "v*" in workflow
     assert "tag_name" in workflow
+    assert "Set package version from release tag" in workflow
+    assert "pyproject.toml" in workflow
+    assert "version = " in workflow
     assert "python -m build --wheel" in workflow
     assert "gh release upload" in workflow
     assert "dist/*.whl" in workflow
