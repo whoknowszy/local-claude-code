@@ -110,7 +110,7 @@ def _error_response(
 
 
 async def _periodic_cleanup(tracker: ClientTracker, interval: float = 30.0) -> None:
-    """Periodically remove stale clients from the tracker."""
+    """Periodically remove stale client sessions."""
     while True:
         await asyncio.sleep(interval)
         removed = tracker.cleanup_stale()
@@ -134,9 +134,15 @@ def create_app(
     async def lifespan(app: FastAPI):
         app.state.client_tracker = ClientTracker()
         cleanup_task = asyncio.create_task(_periodic_cleanup(app.state.client_tracker))
-        yield
-        cleanup_task.cancel()
-        await app.state.registry.close_all()
+        try:
+            yield
+        finally:
+            cleanup_task.cancel()
+            try:
+                await cleanup_task
+            except asyncio.CancelledError:
+                pass
+            await app.state.registry.close_all()
 
     app = FastAPI(title="LCCG", version=importlib.metadata.version("lccg"), lifespan=lifespan)
 
@@ -156,13 +162,11 @@ def create_app(
     @app.get("/v1/stats")
     async def get_stats() -> JSONResponse:
         """Get request statistics."""
-        return JSONResponse(
-            content={
-                "summary": stats.get_summary(),
-                "providers": stats.get_per_provider(),
-                "recent": stats.get_recent(10),
-            }
-        )
+        return JSONResponse(content={
+            "summary": stats.get_summary(),
+            "providers": stats.get_per_provider(),
+            "recent": stats.get_recent(10),
+        })
 
     @app.post("/v1/messages", response_model=None)
     async def messages(request: Request) -> JSONResponse | StreamingResponse:
@@ -186,9 +190,7 @@ def create_app(
         except Exception as e:
             logger.error(
                 "gateway.json_parse_error",
-                request_id=request_id,
-                client_ip=client_ip,
-                error=str(e),
+                request_id=request_id, client_ip=client_ip, error=str(e),
             )
             return _error_response(400, "invalid_request_error", "Invalid JSON body", request_id)
 
@@ -203,12 +205,12 @@ def create_app(
         headers_dict = dict(request.headers)
         # Mask sensitive headers
         headers_to_log = {
-            k: (v[:20] + "..." if len(v) > 20 else v) for k, v in headers_dict.items()
+            k: (v[:20] + "..." if len(v) > 20 else v)
+            for k, v in headers_dict.items()
         }
         # Look for agent-related headers
         agent_headers = {
-            k: v
-            for k, v in headers_dict.items()
+            k: v for k, v in headers_dict.items()
             if "agent" in k.lower() or "subagent" in k.lower() or "x-claude" in k.lower()
         }
 
@@ -261,9 +263,7 @@ def create_app(
         except ValueError as e:
             logger.error(
                 "gateway.route_error",
-                request_id=request_id,
-                model=body.get("model", "unknown"),
-                error=str(e),
+                request_id=request_id, model=body.get("model", "unknown"), error=str(e),
             )
             return _error_response(404, "not_found_error", str(e), request_id)
 
@@ -315,8 +315,7 @@ def create_app(
         except KeyError:
             logger.error(
                 "gateway.provider_not_found",
-                request_id=request_id,
-                provider=route.provider_name,
+                request_id=request_id, provider=route.provider_name,
             )
             return _error_response(
                 404,
@@ -334,39 +333,18 @@ def create_app(
 
         if is_stream:
             return await _handle_streaming(
-                request,
-                provider,
-                payload,
-                transformer,
-                health_tracker,
-                route.provider_name,
-                stats,
-                stats_model,
-                route.scenario,
-                request_id=request_id,
-                client_ip=client_ip,
-                router=active_router,
-                registry=active_registry,
-                body=body,
-                config=active_config,
+                request, provider, payload, transformer,
+                health_tracker, route.provider_name, stats, stats_model, route.scenario,
+                request_id=request_id, client_ip=client_ip,
+                router=active_router, registry=active_registry, body=body, config=active_config,
                 fallback_model=route_key,
             )
         else:
             return await _handle_non_streaming(
-                provider,
-                payload,
-                transformer,
-                health_tracker,
-                route.provider_name,
-                active_router,
-                active_registry,
-                body,
-                active_config,
-                stats,
-                stats_model,
-                route.scenario,
-                request_id=request_id,
-                client_ip=client_ip,
+                provider, payload, transformer, health_tracker, route.provider_name,
+                active_router, active_registry, body, active_config,
+                stats, stats_model, route.scenario,
+                request_id=request_id, client_ip=client_ip,
                 fallback_model=route_key,
             )
 
@@ -445,12 +423,8 @@ async def _handle_non_streaming(
 
         if timer:
             timer.finish(
-                provider=provider_name,
-                model=model,
-                status="success",
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                scenario=scenario,
+                provider=provider_name, model=model, status="success",
+                input_tokens=input_tokens, output_tokens=output_tokens, scenario=scenario,
             )
 
         logger.info(
@@ -541,11 +515,8 @@ async def _handle_non_streaming(
 
         if timer:
             timer.finish(
-                provider=provider_name,
-                model=model,
-                status="error",
-                error=str(e),
-                scenario=scenario,
+                provider=provider_name, model=model, status="error",
+                error=str(e), scenario=scenario,
             )
 
         # Try fallback chain for 5XX/timeout/connection errors
@@ -580,9 +551,7 @@ async def _handle_non_streaming(
                     fb_latency = round(fb_timer.elapsed_ms, 1) if fb_timer else 0
                     if fb_timer:
                         fb_timer.finish(
-                            provider=fb_route.provider_name,
-                            model=fb_route.model,
-                            status="success",
+                            provider=fb_route.provider_name, model=fb_route.model, status="success",
                             input_tokens=usage.get("input_tokens", 0),
                             output_tokens=usage.get("output_tokens", 0),
                             scenario=scenario,
@@ -679,9 +648,7 @@ async def _handle_streaming(
                 latency = round(timer.elapsed_ms, 1) if timer else 0
                 if timer:
                     timer.finish(
-                        provider=provider_name,
-                        model=model,
-                        status="success",
+                        provider=provider_name, model=model, status="success",
                         input_tokens=usage_info["input_tokens"],
                         output_tokens=usage_info["output_tokens"],
                         scenario=scenario,
@@ -760,11 +727,8 @@ async def _handle_streaming(
             )
             if timer:
                 timer.finish(
-                    provider=provider_name,
-                    model=model,
-                    status="error",
-                    error=str(e),
-                    scenario=scenario,
+                    provider=provider_name, model=model, status="error",
+                    error=str(e), scenario=scenario,
                 )
 
             # Try fallback chain for 5XX/timeout/connection errors (not 4XX)
