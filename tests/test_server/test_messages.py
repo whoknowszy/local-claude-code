@@ -44,6 +44,29 @@ class TestHealthEndpoint:
         assert response.json() == {"status": "ok"}
 
 
+class TestClientSessionEndpoints:
+    def test_client_registration_count_and_deregister(self):
+        app, _, _ = _make_app()
+        with TestClient(app) as client:
+            register_response = client.post(
+                "/v1/clients/register",
+                json={"pid": 12345, "hostname": "test-host"},
+            )
+            assert register_response.status_code == 200
+            client_id = register_response.json()["client_id"]
+
+            count_response = client.get("/v1/clients/count")
+            assert count_response.status_code == 200
+            assert count_response.json() == {"count": 1}
+
+            deregister_response = client.post(f"/v1/clients/{client_id}/deregister")
+            assert deregister_response.status_code == 200
+
+            count_response = client.get("/v1/clients/count")
+            assert count_response.status_code == 200
+            assert count_response.json() == {"count": 0}
+
+
 class TestAuthMiddleware:
     def test_no_auth_configured(self):
         app, _, _ = _make_app()
